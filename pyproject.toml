@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [project.scripts]
-decision-tree = "decision_tree:main"
+decision-tree = "decision_tree.cli:main"
 
 [build-system]
 requires = ["uv_build>=0.13.1,<0.14.0"]
@@ -26,4 +26,12 @@ addopts = ["--import-mode=importlib"]
 [dependency-groups]
 dev = [
     "pytest>=9.2.0",
+    "ruff>=0.17.4",
 ]
+
+[tool.ruff]
+line-length = 88
+
+[tool.ruff.lint]
+# E/W pycodestyle, F pyflakes, I import order, B bugbear, UP pyupgrade, SIM simplify
+select = ["E", "W", "F", "I", "B", "UP", "SIM"]
