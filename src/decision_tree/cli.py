@@ -26,6 +26,46 @@ from decision_tree.tree import Leaf, Node, Tree
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 
+_LOADING = "Loading options"
+Header = Annotated[
+    bool,
+    typer.Option(
+        "--header",
+        help="Take column names from the first line.",
+        rich_help_panel=_LOADING,
+    ),
+]
+Sep = Annotated[
+    str | None,
+    typer.Option(
+        "--sep",
+        help="Separator, any single character. Default: detect whitespace , ; | :",
+        rich_help_panel=_LOADING,
+    ),
+]
+Encoding = Annotated[
+    str,
+    typer.Option(
+        "--encoding", help="File encoding, e.g. cp1250.", rich_help_panel=_LOADING
+    ),
+]
+Discrete = Annotated[
+    str,
+    typer.Option(
+        "--discrete",
+        help="Comma-separated columns to treat as discrete.",
+        rich_help_panel=_LOADING,
+    ),
+]
+Continuous = Annotated[
+    str,
+    typer.Option(
+        "--continuous",
+        help="Comma-separated columns to treat as continuous.",
+        rich_help_panel=_LOADING,
+    ),
+]
+
 
 @app.callback()
 def _commands() -> None:
@@ -38,10 +78,24 @@ def train(
     plain: Annotated[
         bool, typer.Option("--plain", help="Plain C4.5-style text, even in a terminal.")
     ] = False,
+    header: Header = False,
+    sep: Sep = None,
+    encoding: Encoding = "utf-8",
+    discrete: Discrete = "",
+    continuous: Continuous = "",
 ) -> None:
     """Build a C4.5 tree with Gain Ratio and print it."""
     out = Console()
-    tree = build_tree(_load(file))
+    tree = build_tree(
+        _load(
+            file,
+            header=header,
+            sep=sep,
+            encoding=encoding,
+            discrete=discrete,
+            continuous=continuous,
+        )
+    )
     if plain or not out.is_terminal:
         _print_plain(out, render_plain(tree))
     else:
@@ -54,21 +108,55 @@ def stats(
     plain: Annotated[
         bool, typer.Option("--plain", help="Plain text tables, even in a terminal.")
     ] = False,
+    header: Header = False,
+    sep: Sep = None,
+    encoding: Encoding = "utf-8",
+    discrete: Discrete = "",
+    continuous: Continuous = "",
 ) -> None:
     """Show each attribute's type, value counts and missing values."""
     out = Console()
-    summary = table_stats(_load(file))
+    summary = table_stats(
+        _load(
+            file,
+            header=header,
+            sep=sep,
+            encoding=encoding,
+            discrete=discrete,
+            continuous=continuous,
+        )
+    )
     if plain or not out.is_terminal:
         _print_plain(out, render_stats_plain(summary))
     else:
         _print_rich_stats(out, summary)
 
 
-def _load(file: str) -> DecisionTable:
+def _load(
+    file: str,
+    *,
+    header: bool,
+    sep: str | None,
+    encoding: str,
+    discrete: str,
+    continuous: str,
+) -> DecisionTable:
     try:
-        return load_table(file)
+        return load_table(
+            file,
+            header=header,
+            sep=sep,
+            encoding=encoding,
+            discrete=_column_list(discrete),
+            continuous=_column_list(continuous),
+        )
     except TableError as error:
         _fail(str(error))
+
+
+def _column_list(columns: str) -> list[str]:
+    """`"a1, a3"` → `["a1", "a3"]`."""
+    return [name.strip() for name in columns.split(",") if name.strip()]
 
 
 def _print_plain(out: Console, text: str) -> None:

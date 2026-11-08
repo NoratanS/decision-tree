@@ -38,3 +38,15 @@ def test_testowatabdec_counts_match_the_table():
     ]
     assert [a.distinct for a in stats.attributes] == [3, 3, 2, 2]
     assert list(stats.class_counts.items()) == [("0", 3), ("1", 4), ("2", 2)]
+
+
+def test_attribute_kind_is_the_inferred_type(write_table):
+    path = write_table("old 3.7 1 yes\nnew 4 2 no\n")
+
+    stats = table_stats(load_table(path))
+
+    assert [a.kind for a in stats.attributes] == [
+        "discrete",
+        "continuous",
+        "discrete",
+    ]

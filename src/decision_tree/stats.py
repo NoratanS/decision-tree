@@ -3,14 +3,14 @@
 from collections import Counter
 from dataclasses import dataclass
 
-from decision_tree.table import DecisionTable
+from decision_tree.table import DecisionTable, Kind
 
 
 @dataclass(frozen=True)
 class AttributeStats:
     name: str
-    kind: str
-    """`discrete` for now; type inference arrives with flexible loading."""
+    kind: Kind
+    """Discrete or Continuous Attribute, as the loader inferred or was told."""
     counts: dict[str, int]
     """Occurrences of each value, in order of first appearance in the file."""
     missing: int
@@ -37,7 +37,7 @@ def table_stats(table: DecisionTable) -> TableStats:
         attributes=tuple(
             AttributeStats(
                 name=name,
-                kind="discrete",
+                kind=table.kinds[index],
                 counts=dict(Counter(case[index] for case in table.cases)),
                 missing=0,
             )

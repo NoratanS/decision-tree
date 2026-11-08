@@ -68,9 +68,8 @@ def test_missing_file_gives_one_line_error():
     assert "Traceback" not in result.output
 
 
-def test_wrong_column_count_gives_one_line_error_naming_the_line(tmp_path):
-    path = tmp_path / "ragged.txt"
-    path.write_text("a b c\nd e\n", encoding="utf-8")
+def test_wrong_column_count_gives_one_line_error_naming_the_line(write_table):
+    path = write_table("a b c\nd e\n")
 
     result = runner.invoke(app, ["train", str(path)])
 
@@ -111,3 +110,71 @@ def test_stats_missing_file_gives_one_line_error():
     assert result.exit_code == 1
     assert result.stderr.strip().count("\n") == 0
     assert "no-such-file.txt" in result.stderr
+
+
+GOLF = "outlook|temp|play\nsłońce|85|nie\nsłońce|80|nie\ndeszcz|70|tak\n"
+
+
+def test_stats_shows_continuous_attributes(write_table):
+    path = write_table("old,3.5,yes\nnew,4,no\n")
+
+    result = runner.invoke(app, ["stats", str(path)])
+
+    assert result.exit_code == 0
+    assert "a1 (discrete): 2 values" in result.stdout
+    assert "a2 (continuous): 2 values" in result.stdout
+
+
+def test_stats_takes_every_loading_option(write_table):
+    file = str(write_table(GOLF, encoding="cp1250"))
+
+    result = runner.invoke(
+        app,
+        [
+            "stats",
+            file,
+            "--header",
+            "--sep",
+            "|",
+            "--encoding",
+            "cp1250",
+            "--continuous",
+            "temp",
+            "--discrete",
+            "outlook",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "outlook (discrete): 2 values" in result.stdout
+    assert "temp (continuous): 3 values" in result.stdout
+    assert "play (decision): 2 classes" in result.stdout
+    assert "słońce" in result.stdout
+
+
+def test_override_lists_are_comma_separated(write_table):
+    path = write_table("1 2 3 yes\n4 5 6 no\n")
+
+    result = runner.invoke(app, ["stats", str(path), "--continuous", "a1, a3"])
+
+    assert result.exit_code == 0, result.output
+    assert "a1 (continuous)" in result.stdout
+    assert "a2 (discrete)" in result.stdout
+    assert "a3 (continuous)" in result.stdout
+
+
+def test_train_takes_loading_options(write_table):
+    result = runner.invoke(app, ["train", str(write_table(GOLF)), "--header"])
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout == "outlook = słońce: nie (2.0)\noutlook = deszcz: tak (1.0)\n"
+
+
+def test_unknown_override_column_gives_one_line_error(write_table):
+    result = runner.invoke(
+        app, ["train", str(write_table(GOLF)), "--header", "--continuous", "wind"]
+    )
+
+    assert result.exit_code == 1
+    assert result.stderr.strip().count("\n") == 0
+    assert "unknown column 'wind'" in result.stderr
