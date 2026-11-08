@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from decision_tree.builder import build_tree
-from decision_tree.table import load_table
+from decision_tree.table import ReadOptions, load_table
 from decision_tree.tree import Leaf, Node, classify
 
 DATA = Path(__file__).parent.parent / "data"
@@ -36,7 +36,9 @@ def test_empty_leaf_gives_its_class_with_probability_one():
 
 def test_golf_outlook_never_seen_in_training_is_classified_as_missing():
     table = load_table(
-        DATA / "golf.txt", header=True, continuous=["temperature", "humidity"]
+        DATA / "golf.txt",
+        ReadOptions(header=True),
+        continuous=["temperature", "humidity"],
     )
     tree = build_tree(table)
 
@@ -78,7 +80,9 @@ def test_golf_sunny_case_with_missing_humidity_matches_reference_page():
     # Reference page: under sunny, 2 of 5 cases have humidity <= 75 (Play), so
     # the case is Play with 0.4 and Don't Play with 0.6.
     table = load_table(
-        DATA / "golf.txt", header=True, continuous=["temperature", "humidity"]
+        DATA / "golf.txt",
+        ReadOptions(header=True),
+        continuous=["temperature", "humidity"],
     )
     tree = build_tree(table)
 

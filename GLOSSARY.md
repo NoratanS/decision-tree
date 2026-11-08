@@ -45,6 +45,10 @@ The decision table a tree is built from.
 A decision table with known decisions, used only to measure how well a tree classifies.
 _Avoid_: validation set
 
+**Experiment**:
+One run of building a tree from a Training Set, optionally pruning it, and evaluating each tree on the Training Set and an optional Test Set (a separate table or a hold-out split of the Training Set).
+_Avoid_: run, pipeline, session
+
 ## Split measures
 
 **Entropy**:

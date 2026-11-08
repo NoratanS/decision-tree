@@ -198,17 +198,6 @@ def test_stats_takes_every_loading_option(write_table):
     assert "słońce" in result.stdout
 
 
-def test_override_lists_are_comma_separated(write_table):
-    path = write_table("1 2 3 yes\n4 5 6 no\n")
-
-    result = runner.invoke(app, ["stats", str(path), "--continuous", "a1, a3"])
-
-    assert result.exit_code == 0, result.output
-    assert "a1 (continuous)" in result.stdout
-    assert "a2 (discrete)" in result.stdout
-    assert "a3 (continuous)" in result.stdout
-
-
 def test_train_takes_loading_options(write_table):
     # -m 1: the 2 : 1 split would be blocked by the default -m 2.
     result = runner.invoke(
@@ -407,20 +396,6 @@ def test_stats_reports_missing_values_with_the_default_markers(write_table):
     assert result.exit_code == 0, result.output
     assert "a1 (discrete): 2 values, 1 missing" in result.stdout
     assert "a2 (discrete): 1 value, 2 missing" in result.stdout
-
-
-def test_missing_option_is_a_comma_list_where_an_empty_item_is_the_empty_cell(
-    write_table,
-):
-    path = write_table("old,-,up\n,?,down\nnew,yes,up\n")
-
-    only_dash = runner.invoke(app, ["stats", str(path), "--missing", "-"])
-    dash_and_empty = runner.invoke(app, ["stats", str(path), "--missing", "-,"])
-
-    assert only_dash.exit_code == 0, only_dash.output
-    assert "a1 (discrete): 3 values, 0 missing" in only_dash.stdout
-    assert "a2 (discrete): 2 values, 1 missing" in only_dash.stdout
-    assert "a1 (discrete): 2 values, 1 missing" in dash_and_empty.stdout
 
 
 def test_train_with_missing_values_shows_fractional_leaf_counts(write_table):

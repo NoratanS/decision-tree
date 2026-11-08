@@ -4,6 +4,8 @@ The only module allowed to import Typer and Rich (ADR 0003).
 """
 
 import random
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Annotated, NoReturn
 
 import typer
@@ -41,9 +43,12 @@ from decision_tree.stats import TableStats, table_stats
 from decision_tree.table import (
     MISSING_MARKERS,
     DecisionTable,
+    ReadOptions,
     TableError,
     load_cases,
     load_table,
+    parse_columns,
+    parse_markers,
 )
 from decision_tree.tree import Leaf, Node, Tree
 
@@ -205,27 +210,15 @@ def train(
     if seed is not None and split is None:
         _fail("--seed needs --split")
     out = Console()
-    training = _load(
-        file,
-        header=header,
-        sep=sep,
-        encoding=encoding,
-        discrete=discrete,
-        continuous=continuous,
-        missing=missing,
-    )
-    tests: list[tuple[str, DecisionTable]] = []
-    if test is not None:
-        test_set = _load(
-            test,
-            header=header,
-            sep=sep,
-            encoding=encoding,
-            missing=missing,
-            like=training,
+    with _table_errors():
+        options = _read_options(header, sep, encoding, missing)
+        training = _load_training(file, options, discrete, continuous)
+        tests: list[tuple[str, DecisionTable]] = (
+            []
+            if test is None
+            else [(f"Test Set ({test})", load_table(test, options, like=training))]
         )
-        tests.append((f"Test Set ({test})", test_set))
-    elif split is not None:
+    if split is not None:
         if seed is None:
             seed = random.randrange(2**32)
         try:
@@ -290,26 +283,10 @@ def classify(
 ) -> None:
     """Build a tree from TRAIN and classify each case of CASES."""
     out = Console()
-    training = _load(
-        train_file,
-        header=header,
-        sep=sep,
-        encoding=encoding,
-        discrete=discrete,
-        continuous=continuous,
-        missing=missing,
-    )
-    try:
-        to_classify = load_cases(
-            cases,
-            like=training,
-            header=header,
-            sep=sep,
-            encoding=encoding,
-            missing=_marker_list(missing),
-        )
-    except TableError as error:
-        _fail(str(error))
+    with _table_errors():
+        options = _read_options(header, sep, encoding, missing)
+        training = _load_training(train_file, options, discrete, continuous)
+        to_classify = load_cases(cases, options, like=training)
     tree = build_tree(
         training,
         criterion=criterion,
@@ -338,57 +315,43 @@ def stats(
 ) -> None:
     """Show each attribute's type, value counts and missing values."""
     out = Console()
-    summary = table_stats(
-        _load(
-            file,
-            header=header,
-            sep=sep,
-            encoding=encoding,
-            discrete=discrete,
-            continuous=continuous,
-            missing=missing,
-        )
-    )
+    with _table_errors():
+        options = _read_options(header, sep, encoding, missing)
+        table = _load_training(file, options, discrete, continuous)
+    summary = table_stats(table)
     if plain or not out.is_terminal:
         _print_plain(out, render_stats_plain(summary))
     else:
         _print_rich_stats(out, summary)
 
 
-def _load(
-    file: str,
-    *,
-    header: bool,
-    sep: str | None,
-    encoding: str,
-    discrete: str = "",
-    continuous: str = "",
-    missing: str = _DEFAULT_MISSING,
-    like: DecisionTable | None = None,
+def _read_options(
+    header: bool, sep: str | None, encoding: str, missing: str
+) -> ReadOptions:
+    return ReadOptions(
+        sep=sep, header=header, encoding=encoding, missing=parse_markers(missing)
+    )
+
+
+def _load_training(
+    file: str, options: ReadOptions, discrete: str, continuous: str
 ) -> DecisionTable:
+    """Load FILE with the --discrete / --continuous overrides."""
+    return load_table(
+        file,
+        options,
+        discrete=parse_columns(discrete),
+        continuous=parse_columns(continuous),
+    )
+
+
+@contextmanager
+def _table_errors() -> Iterator[None]:
+    """Report a TableError as a one-line error and exit."""
     try:
-        return load_table(
-            file,
-            header=header,
-            sep=sep,
-            encoding=encoding,
-            discrete=_column_list(discrete),
-            continuous=_column_list(continuous),
-            missing=_marker_list(missing),
-            like=like,
-        )
+        yield
     except TableError as error:
         _fail(str(error))
-
-
-def _column_list(columns: str) -> list[str]:
-    """`"a1, a3"` → `["a1", "a3"]`."""
-    return [name.strip() for name in columns.split(",") if name.strip()]
-
-
-def _marker_list(markers: str) -> list[str]:
-    """`"?, NA,"` → `["?", "NA", ""]`: empty items keep the empty cell."""
-    return [marker.strip() for marker in markers.split(",")]
 
 
 def _print_plain(out: Console, text: str) -> None:

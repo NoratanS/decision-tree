@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from decision_tree.evaluate import classify_cases, evaluate, hold_out
-from decision_tree.table import Cases, DecisionTable, load_table
+from decision_tree.table import Cases, DecisionTable, ReadOptions, load_table
 from decision_tree.tree import Leaf, Node
 
 DATA = Path(__file__).parent.parent / "data"
@@ -67,7 +67,9 @@ def test_empty_test_set_has_no_errors_and_rate_zero():
 
 def golf() -> DecisionTable:
     return load_table(
-        DATA / "golf.txt", header=True, continuous=["temperature", "humidity"]
+        DATA / "golf.txt",
+        ReadOptions(header=True),
+        continuous=["temperature", "humidity"],
     )
 
 

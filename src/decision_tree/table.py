@@ -69,62 +69,93 @@ class DecisionTable:
         )
 
 
-def load_table(
-    path: str | os.PathLike[str],
-    *,
-    sep: str | None = None,
-    header: bool = False,
-    encoding: str = "utf-8",
-    discrete: Iterable[str] = (),
-    continuous: Iterable[str] = (),
-    missing: Iterable[str] = MISSING_MARKERS,
-    like: DecisionTable | None = None,
-) -> DecisionTable:
-    """Read a Decision Table.
+@dataclass(frozen=True)
+class ReadOptions:
+    """How to read a Decision Table file; the same for every file of a run.
 
     `sep` is any single character; `None` detects the separator. With `header`
     the first non-blank line names the columns, otherwise they are `a1 … an`
     and `d`. The file is decoded with `encoding`.
 
+    A cell equal to one of the `missing` markers (after trimming) is a Missing
+    Value, stored as None; `""` stands for the empty cell. Quoting does not
+    change this: `"?"` is missing too.
+    """
+
+    sep: str | None = None
+    header: bool = False
+    encoding: str = "utf-8"
+    missing: tuple[str, ...] = MISSING_MARKERS
+
+    def __post_init__(self) -> None:
+        if self.sep is not None and len(self.sep) != 1:
+            raise TableError(f"separator must be a single character, got {self.sep!r}")
+
+
+DEFAULT_READ_OPTIONS = ReadOptions()
+"""No header, detected separator, UTF-8, the default Missing Value markers."""
+
+
+def parse_columns(text: str) -> tuple[str, ...]:
+    """Column names from a comma list: `"a1, a3"` → `("a1", "a3")`."""
+    return tuple(name.strip() for name in text.split(",") if name.strip())
+
+
+def parse_markers(text: str) -> tuple[str, ...]:
+    """Missing Value markers from a comma list: `"?, NA,"` → `("?", "NA", "")`.
+
+    An empty item is the empty cell.
+    """
+    return tuple(marker.strip() for marker in text.split(","))
+
+
+def load_table(
+    path: str | os.PathLike[str],
+    options: ReadOptions = DEFAULT_READ_OPTIONS,
+    *,
+    discrete: Iterable[str] = (),
+    continuous: Iterable[str] = (),
+    like: DecisionTable | None = None,
+) -> DecisionTable:
+    """Read a Decision Table as `options` say. A missing decision is an error.
+
     Attribute types are inferred (ADR 0001); `discrete` and `continuous` name
     columns whose type is forced instead.
 
-    A cell equal to one of the `missing` markers (after trimming) is a Missing
-    Value, stored as None; `""` stands for the empty cell. Quoting does not
-    change this: `"?"` is missing too. A missing decision is an error.
-
     With `like` (e.g. the Training Set, when reading a Test Set) the file must
-    have that table's column count and takes its attribute types; `discrete`
-    and `continuous` are then ignored.
+    have that table's column count and takes its attribute types, so `discrete`
+    and `continuous` cannot be given. With `header`, its column names must also
+    be `like`'s, in the same order.
     """
-    name, numbers, header_names, rows = _read_rows(
-        path, sep=sep, header=header, encoding=encoding, min_columns=2
-    )
-    if like is not None and len(rows[0]) != len(like.attributes) + 1:
+    discrete, continuous = tuple(discrete), tuple(continuous)
+    if like is not None and (discrete or continuous):
         raise TableError(
-            f"{name} has {len(rows[0])} columns, expected "
-            f"{len(like.attributes) + 1} like the Training Set"
+            "discrete and continuous cannot be forced on a table read like "
+            "another: it takes that table's types"
         )
-    names = header_names or [*(f"a{i}" for i in range(1, len(rows[0]))), "d"]
-    markers = frozenset(missing)
-    decisions = _decisions(name, numbers, rows, markers)
-    cases = _cases(rows, len(rows[0]) - 1, markers)
+    parsed = _read_rows(path, options, min_columns=2)
+    width = len(parsed.rows[0])
+    if like is not None:
+        _check_like(parsed, like, decision_optional=False)
+    names = parsed.header_names or [*(f"a{i}" for i in range(1, width)), "d"]
+    markers = frozenset(options.missing)
+    decisions = _decisions(parsed, markers)
+    cases = _cases(parsed.rows, width - 1, markers)
     if like is None:
-        kinds = [_infer_kind(column) for column in zip(*cases, strict=True)]
         forced = _overrides(names, discrete, continuous)
+        columns = enumerate(zip(*cases, strict=True))
+        kinds = tuple(forced.get(i) or _infer_kind(column) for i, column in columns)
     else:
-        kinds = list(like.kinds)
-        forced = dict(enumerate(like.kinds))
-    _check_continuous(name, names, forced, numbers, cases)
-    for index, kind in forced.items():
-        kinds[index] = kind
+        kinds = like.kinds
+        forced = dict(enumerate(kinds))
+    _check_continuous(parsed.name, names, forced, parsed.numbers, cases)
 
     return DecisionTable(
         attributes=tuple(names[:-1]),
         decision=names[-1],
         cases=cases,
         decisions=decisions,
-        kinds=tuple(kinds),
+        kinds=kinds,
     )
 
 
@@ -141,60 +172,54 @@ class Cases:
 
 def load_cases(
     path: str | os.PathLike[str],
+    options: ReadOptions = DEFAULT_READ_OPTIONS,
     *,
     like: DecisionTable,
-    sep: str | None = None,
-    header: bool = False,
-    encoding: str = "utf-8",
-    missing: Iterable[str] = MISSING_MARKERS,
 ) -> Cases:
     """Read Cases to classify with a tree built from `like` (spec R10).
 
     The file has one column per Conditional Attribute of `like`, optionally
-    followed by the decision. The attribute types are `like`'s. The other
-    options are as in `load_table`; a header line is skipped.
+    followed by the decision. The attribute types are `like`'s. With `header`,
+    the column names must be `like`'s, in the same order.
     """
-    name, numbers, _, rows = _read_rows(
-        path, sep=sep, header=header, encoding=encoding, min_columns=1
-    )
+    parsed = _read_rows(path, options, min_columns=1)
+    _check_like(parsed, like, decision_optional=True)
     width = len(like.attributes)
-    if len(rows[0]) not in (width, width + 1):
-        raise TableError(
-            f"{name} has {len(rows[0])} columns, expected {width} (without a "
-            f"decision) or {width + 1} like the Training Set"
-        )
-    markers = frozenset(missing)
-    decisions = (
-        _decisions(name, numbers, rows, markers) if len(rows[0]) > width else None
-    )
-    cases = _cases(rows, width, markers)
+    markers = frozenset(options.missing)
+    has_decisions = len(parsed.rows[0]) > width
+    decisions = _decisions(parsed, markers) if has_decisions else None
+    cases = _cases(parsed.rows, width, markers)
     _check_continuous(
-        name, like.attributes, dict(enumerate(like.kinds)), numbers, cases
+        parsed.name, like.attributes, dict(enumerate(like.kinds)), parsed.numbers, cases
     )
     return Cases(cases, decisions)
 
 
+@dataclass(frozen=True)
+class _Rows:
+    """A file split into rows of trimmed values."""
+
+    name: str
+    """The file name, for error messages."""
+    numbers: list[int]
+    """Line number of each row."""
+    header_names: list[str] | None
+    """Column names from the header line, or None without `header`."""
+    rows: list[list[str]]
+
+
 def _read_rows(
-    path: str | os.PathLike[str],
-    *,
-    sep: str | None,
-    header: bool,
-    encoding: str,
-    min_columns: int,
-) -> tuple[str, list[int], list[str] | None, list[list[str]]]:
-    """File name, line number of each row, header names (or None), and the rows
-    split into trimmed values."""
+    path: str | os.PathLike[str], options: ReadOptions, *, min_columns: int
+) -> _Rows:
     name = os.fspath(path)
-    if sep is not None and len(sep) != 1:
-        raise TableError(f"separator must be a single character, got {sep!r}")
     try:
-        with open(path, encoding=encoding) as file:
+        with open(path, encoding=options.encoding) as file:
             text = file.read()
     except LookupError:
-        raise TableError(f"unknown encoding {encoding!r}") from None
+        raise TableError(f"unknown encoding {options.encoding!r}") from None
     except UnicodeDecodeError as error:
         raise TableError(
-            f"cannot read {name} as {encoding}: {error.reason} at byte "
+            f"cannot read {name} as {options.encoding}: {error.reason} at byte "
             f"{error.start}; try another encoding (e.g. cp1250)"
         ) from None
     except OSError as error:
@@ -205,30 +230,57 @@ def _read_rows(
         for number, line in enumerate(text.splitlines(), start=1)
         if line.strip()
     ]
-    if len(lines) <= header:
+    if len(lines) <= options.header:
         raise TableError(f"{name}: no cases found")
 
-    candidates = _CANDIDATES if sep is None else (sep,)
+    candidates = _CANDIDATES if options.sep is None else (options.sep,)
     rows = _split_table(name, lines, candidates, min_columns)
     numbers = [number for number, _ in lines]
-    names = None
-    if header:
-        names = rows.pop(0)
-        _check_header(name, numbers.pop(0), names)
-    return name, numbers, names, rows
+    header_names = None
+    if options.header:
+        header_names = rows.pop(0)
+        _check_header(name, numbers.pop(0), header_names)
+    return _Rows(name, numbers, header_names, rows)
 
 
-def _decisions(
-    name: str, numbers: list[int], rows: list[list[str]], markers: frozenset[str]
-) -> tuple[str, ...]:
+def _check_like(parsed: _Rows, like: DecisionTable, *, decision_optional: bool) -> None:
+    """The file has `like`'s columns: its column count and, with a header, its
+    names in the same order. With `decision_optional` the decision column may
+    be left out."""
+    width = len(like.attributes)
+    found = len(parsed.rows[0])
+    if found not in ((width, width + 1) if decision_optional else (width + 1,)):
+        expected = (
+            f"{width} (without a decision) or {width + 1}"
+            if decision_optional
+            else f"{width + 1}"
+        )
+        raise TableError(
+            f"{parsed.name} has {found} columns, expected {expected} "
+            "like the Training Set"
+        )
+    if parsed.header_names is None:
+        return
+    expected_names = (*like.attributes, like.decision)
+    for column, (name, wanted) in enumerate(
+        zip(parsed.header_names, expected_names, strict=False), start=1
+    ):
+        if name != wanted:
+            raise TableError(
+                f"{parsed.name}: column {column} is named {name!r}, expected "
+                f"{wanted!r} like the Training Set"
+            )
+
+
+def _decisions(parsed: _Rows, markers: frozenset[str]) -> tuple[str, ...]:
     """The last column; a Missing Value marker there is an error."""
-    for number, row in zip(numbers, rows, strict=True):
+    for number, row in zip(parsed.numbers, parsed.rows, strict=True):
         if row[-1] in markers:
             raise TableError(
-                f"{name}, line {number}: the decision is missing "
+                f"{parsed.name}, line {number}: the decision is missing "
                 f"({row[-1]!r} is a Missing Value marker)"
             )
-    return tuple(row[-1] for row in rows)
+    return tuple(row[-1] for row in parsed.rows)
 
 
 def _cases(

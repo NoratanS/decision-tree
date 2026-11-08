@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from decision_tree import build_tree, evaluate, load_table
+from decision_tree import ReadOptions, build_tree, evaluate, load_table
 from decision_tree.pruning import estimated_errors, prune
 from decision_tree.render import render_plain
 from decision_tree.tree import Leaf, Node, size
@@ -70,7 +70,9 @@ def test_prune_keeps_the_unpruned_tree_intact():
 
 def load_golf():
     path = DATA / "golf.txt"
-    return load_table(path, header=True, continuous=["temperature", "humidity"])
+    return load_table(
+        path, ReadOptions(header=True), continuous=["temperature", "humidity"]
+    )
 
 
 def course_mode_test_table():

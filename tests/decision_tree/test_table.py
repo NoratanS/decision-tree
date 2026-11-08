@@ -2,7 +2,14 @@ from pathlib import Path
 
 import pytest
 
-from decision_tree.table import TableError, load_cases, load_table
+from decision_tree.table import (
+    ReadOptions,
+    TableError,
+    load_cases,
+    load_table,
+    parse_columns,
+    parse_markers,
+)
 
 DATA = Path(__file__).parent.parent / "data"
 
@@ -94,7 +101,7 @@ def test_no_fitting_separator_names_the_line_where_detection_fails(write_table):
 def test_explicit_separator_can_be_any_single_character(write_table):
     path = write_table("old#yes, really#down\nnew#no#up\n")
 
-    table = load_table(path, sep="#")
+    table = load_table(path, ReadOptions(sep="#"))
 
     assert table.cases == (("old", "yes, really"), ("new", "no"))
 
@@ -103,14 +110,14 @@ def test_ragged_line_with_explicit_separator_names_the_line(write_table):
     path = write_table("a;b;c\n\nd;e\n")
 
     with pytest.raises(TableError, match=r"line 3: expected 3 columns"):
-        load_table(path, sep=";")
+        load_table(path, ReadOptions(sep=";"))
 
 
 def test_separator_must_be_one_character(write_table):
     path = write_table("a::b\n")
 
     with pytest.raises(TableError, match="single character"):
-        load_table(path, sep="::")
+        load_table(path, ReadOptions(sep="::"))
 
 
 def test_quoted_values_may_contain_the_separator(write_table):
@@ -135,13 +142,13 @@ def test_unclosed_quote_names_the_line(write_table):
     path = write_table('a;b\n"c;d\n')
 
     with pytest.raises(TableError, match=r"line 2: unclosed quote"):
-        load_table(path, sep=";")
+        load_table(path, ReadOptions(sep=";"))
 
 
 def test_header_names_the_columns(write_table):
     path = write_table("\nage,profit,play\nold,yes,down\nnew,no,up\n")
 
-    table = load_table(path, header=True)
+    table = load_table(path, ReadOptions(header=True))
 
     assert table.attributes == ("age", "profit")
     assert table.decision == "play"
@@ -161,14 +168,14 @@ def test_header_without_cases_is_a_table_error(write_table):
     path = write_table("age,profit,play\n")
 
     with pytest.raises(TableError, match="no cases"):
-        load_table(path, header=True)
+        load_table(path, ReadOptions(header=True))
 
 
 def test_duplicate_header_names_are_a_table_error(write_table):
     path = write_table("age,age,play\nold,yes,down\n")
 
     with pytest.raises(TableError, match=r"line 1: duplicate column name 'age'"):
-        load_table(path, header=True)
+        load_table(path, ReadOptions(header=True))
 
 
 def test_values_are_trimmed_and_case_sensitive(write_table):
@@ -185,7 +192,7 @@ def test_encoding_reads_a_cp1250_file_with_polish_characters(write_table):
     text = "wiek;zysk;decyzja\nstary;tak;spadek\nnowy;żółć;wzrost\n"
     path = write_table(text, encoding="cp1250")
 
-    table = load_table(path, header=True, encoding="cp1250")
+    table = load_table(path, ReadOptions(header=True, encoding="cp1250"))
 
     assert table.attributes == ("wiek", "zysk")
     assert table.cases[1] == ("nowy", "żółć")
@@ -202,7 +209,7 @@ def test_unknown_encoding_is_a_table_error(write_table):
     path = write_table("a;b\n")
 
     with pytest.raises(TableError, match="unknown encoding 'klingon'"):
-        load_table(path, encoding="klingon")
+        load_table(path, ReadOptions(encoding="klingon"))
 
 
 def test_text_and_whole_numbers_are_discrete_fractions_are_continuous(write_table):
@@ -248,7 +255,7 @@ def test_course_tables_are_all_discrete():
 def test_continuous_override_makes_whole_numbers_continuous(write_table):
     path = write_table("temp,hum,play\n85,85,no\n80,90,yes\n", "golf.csv")
 
-    table = load_table(path, header=True, continuous=["temp", "hum"])
+    table = load_table(path, ReadOptions(header=True), continuous=["temp", "hum"])
 
     assert table.kinds == ("continuous", "continuous")
 
@@ -317,7 +324,9 @@ def test_quoted_values_keep_their_spaces(write_table):
 
 def golf_training():
     return load_table(
-        DATA / "golf.txt", header=True, continuous=["temperature", "humidity"]
+        DATA / "golf.txt",
+        ReadOptions(header=True),
+        continuous=["temperature", "humidity"],
     )
 
 
@@ -346,6 +355,67 @@ def test_like_checks_continuous_values_and_names_the_line(write_table):
         load_table(path, like=golf_training())
 
 
+@pytest.mark.parametrize("override", ["discrete", "continuous"])
+def test_like_cannot_be_combined_with_type_overrides(write_table, override):
+    path = write_table("sunny 1 2 false Play\n")
+
+    with pytest.raises(TableError, match="takes that table's types"):
+        load_table(path, like=golf_training(), **{override: ["a1"]})
+
+
+GOLF_HEADER = "outlook temperature humidity windy play\n"
+
+
+@pytest.mark.parametrize(
+    ("header", "column"),
+    [
+        ("outlook temp humidity windy play\n", "column 2 is named 'temp'"),
+        ("outlook humidity temperature windy play\n", "column 2 is named 'humidity'"),
+        ("outlook temperature humidity windy result\n", "column 5 is named 'result'"),
+    ],
+)
+def test_like_with_header_names_the_first_column_named_differently(
+    write_table, header, column
+):
+    path = write_table(header + "sunny 1 2 false Play\n")
+
+    with pytest.raises(TableError, match=f"{column}, expected '") as error:
+        load_table(path, ReadOptions(header=True), like=golf_training())
+    assert "\n" not in str(error.value)
+
+
+def test_like_with_matching_header_reads_the_table(write_table):
+    path = write_table(GOLF_HEADER + "sunny 1 2 false Play\n")
+
+    table = load_table(path, ReadOptions(header=True), like=golf_training())
+
+    assert table.attributes == golf_training().attributes
+    assert table.cases == (("sunny", "1", "2", "false"),)
+
+
+def test_like_without_header_does_not_check_names(write_table):
+    training = load_table(write_table("old up\nnew down\n", name="training.txt"))
+    path = write_table("x y\nold up\n")
+
+    table = load_table(path, like=training)
+
+    assert table.cases == (("x",), ("old",))
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "outlook temp humidity windy\nsunny 1 2 false\n",
+        "outlook temp humidity windy play\nsunny 1 2 false Play\n",
+    ],
+)
+def test_cases_with_header_name_the_first_column_named_differently(write_table, text):
+    path = write_table(text)
+
+    with pytest.raises(TableError, match="column 2 is named 'temp', expected 'temp"):
+        load_cases(path, ReadOptions(header=True), like=golf_training())
+
+
 def test_cases_without_a_decision_column_have_no_decisions(write_table):
     path = write_table("sunny 85 ? false\nfoggy 70 96 true\n")
 
@@ -371,16 +441,12 @@ def test_cases_with_a_decision_column_keep_their_decisions(write_table):
 
 
 def test_cases_take_a_header_and_loading_options(write_table):
-    path = write_table("o;t;h;w\nsłońce;85;-;false\n", encoding="cp1250")
+    text = "outlook;temperature;humidity;windy\nsłońce;85;-;false\n"
+    path = write_table(text, encoding="cp1250")
 
-    cases = load_cases(
-        path,
-        like=golf_training(),
-        header=True,
-        sep=";",
-        encoding="cp1250",
-        missing=["-"],
-    )
+    options = ReadOptions(sep=";", header=True, encoding="cp1250", missing=("-",))
+
+    cases = load_cases(path, options, like=golf_training())
 
     assert cases.cases == (("słońce", "85", None, "false"),)
 
@@ -427,7 +493,7 @@ def test_default_missing_markers_are_question_mark_na_and_empty_cell(write_table
 def test_missing_markers_are_configurable(write_table):
     path = write_table("-,?,yes\nold,,no\n")
 
-    table = load_table(path, missing=["-"])
+    table = load_table(path, ReadOptions(missing=("-",)))
 
     assert table.cases == ((None, "?"), ("old", ""))
 
@@ -459,3 +525,22 @@ def test_known_values_skip_missing_ones(write_table):
     path = write_table("? yes\nold no\n? no\nnew yes\n")
 
     assert load_table(path).values(0) == ("old", "new")
+
+
+def test_override_lists_are_comma_separated():
+    assert parse_columns("a1, a3") == ("a1", "a3")
+    assert parse_columns(" a1 ,, ") == ("a1",)
+    assert parse_columns("") == ()
+
+
+def test_missing_option_is_a_comma_list_where_an_empty_item_is_the_empty_cell(
+    write_table,
+):
+    path = write_table("old,-,up\n,?,down\nnew,yes,up\n")
+
+    assert parse_markers("-") == ("-",)
+    assert parse_markers("?, NA,") == ("?", "NA", "")
+    only_dash = load_table(path, ReadOptions(missing=parse_markers("-")))
+    dash_and_empty = load_table(path, ReadOptions(missing=parse_markers("-,")))
+    assert only_dash.cases == (("old", None), ("", "?"), ("new", "yes"))
+    assert dash_and_empty.cases == (("old", None), (None, "?"), ("new", "yes"))

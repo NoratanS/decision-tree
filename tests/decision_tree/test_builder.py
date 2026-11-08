@@ -4,7 +4,7 @@ import pytest
 
 from decision_tree.builder import build_tree
 from decision_tree.render import render_plain
-from decision_tree.table import load_table
+from decision_tree.table import ReadOptions, load_table
 from decision_tree.tree import Leaf, Node, classify
 
 DATA = Path(__file__).parent.parent / "data"
@@ -50,7 +50,9 @@ def test_stock_market_tree_matches_reference_page():
 
 
 def load_golf():
-    return load_table(GOLF, header=True, continuous=["temperature", "humidity"])
+    return load_table(
+        GOLF, ReadOptions(header=True), continuous=["temperature", "humidity"]
+    )
 
 
 def test_golf_tree_matches_reference_page():
@@ -247,7 +249,9 @@ outlook = rain:
 def test_golf_with_a_missing_outlook_matches_quinlan(write_table):
     text = GOLF.read_text().replace("overcast, 72, 90", "?, 72, 90")
     table = load_table(
-        write_table(text), header=True, continuous=["temperature", "humidity"]
+        write_table(text),
+        ReadOptions(header=True),
+        continuous=["temperature", "humidity"],
     )
 
     tree = build_tree(table)
