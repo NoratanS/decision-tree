@@ -9,6 +9,9 @@ from decision_tree.experiment import (
     TrainingSet,
 )
 from decision_tree.render import (
+    TableBlock,
+    classification_blocks,
+    experiment_blocks,
     render_classification_plain,
     render_experiment_plain,
     render_plain,
@@ -116,6 +119,36 @@ def test_classification_with_decisions_marks_wrong_predictions_and_gives_accurac
     )
 
 
+def roles(block: TableBlock) -> list[list[str | None]]:
+    return [[cell.role for cell in row] for row in block.rows]
+
+
+def test_classification_marks_correct_and_wrong_predictions_by_role():
+    result = Classification(
+        GOLF_CLASSES,
+        ({"Play": 0.4, "Don't Play": 0.6}, {"Play": 1.0, "Don't Play": 0.0}),
+        decisions=("Play", "Play"),
+    )
+
+    [table] = classification_blocks(result)
+
+    # case, predicted, Play, Don't Play, actual, mark
+    assert roles(table) == [
+        [None, "wrong", None, None, None, "wrong"],
+        [None, "correct", None, None, None, None],
+    ]
+
+
+def test_classification_without_decisions_has_no_roles():
+    result = Classification(
+        GOLF_CLASSES, ({"Play": 0.4, "Don't Play": 0.6},), decisions=None
+    )
+
+    [table] = classification_blocks(result)
+
+    assert roles(table) == [[None, None, None, None]]
+
+
 @pytest.mark.parametrize(
     ("evaluated_set", "name"),
     [
@@ -167,6 +200,25 @@ def test_experiment_without_pruning_shows_one_tree_and_its_evaluation():
         "  yes                   3   0\n"
         "  no                    1   2"
     )
+
+
+def test_confusion_matrix_cells_are_correct_wrong_or_empty():
+    result = ExperimentResult(
+        SPLIT_TREE,
+        None,
+        None,
+        None,
+        (SetEvaluation(TrainingSet(), evaluation((3, 0), (1, 2)), None),),
+    )
+
+    matrix = experiment_blocks(result)[-1]
+
+    assert isinstance(matrix, TableBlock)
+    # actual class, predicted yes, predicted no
+    assert roles(matrix) == [
+        [None, "correct", "empty"],
+        [None, "wrong", "correct"],
+    ]
 
 
 def pruned_result(*evaluations: SetEvaluation, confidence=0.25) -> ExperimentResult:

@@ -1,9 +1,14 @@
-"""Plain text: C4.5-style trees (spec R9), table statistics (spec R2),
-evaluations and set names (spec R8), the Experiment report and classified Cases
-(spec R10)."""
+"""Each output described once, as blocks, plus the plain-text adapter.
+
+C4.5-style trees (spec R9), table statistics (spec R2), evaluations and set
+names (spec R8), the Experiment report and classified Cases (spec R10). A
+TableBlock's cells carry a role (correct, wrong, empty) that plain text ignores
+and the Rich adapter in `cli.py` colours.
+"""
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Literal
 
 from decision_tree.evaluate import Classification, Evaluation
 from decision_tree.experiment import (
@@ -15,7 +20,6 @@ from decision_tree.experiment import (
 )
 from decision_tree.stats import AttributeStats, TableStats
 from decision_tree.tree import (
-    ClassDistribution,
     DiscreteTest,
     Leaf,
     Node,
@@ -98,14 +102,48 @@ def _render_node(node: Node, depth: int, lines: list[str]) -> None:
             _render_node(child, depth + 1, lines)
 
 
-def render_stats_plain(stats: TableStats) -> str:
-    """One block per attribute, then the Decision Attribute; no final newline."""
+@dataclass(frozen=True)
+class Column:
+    """A table column. `plain_heading`, if set, replaces `heading` in plain text."""
+
+    heading: str
+    justify: Literal["left", "right"] = "left"
+    plain_heading: str | None = None
+
+
+type Role = Literal["correct", "wrong", "empty"] | None
+"""What a cell means: a correct or wrong prediction, or an empty count."""
+
+
+@dataclass(frozen=True)
+class Cell:
+    text: str
+    role: Role = None
+
+
+@dataclass(frozen=True)
+class TableBlock:
+    """An aligned table, under a heading if any, with a closing line if any.
+
+    Plain text indents a table that has a heading and prints the column
+    headings as a first row only with `plain_header`.
+    """
+
+    heading: str | None
+    columns: tuple[Column, ...]
+    rows: tuple[tuple[Cell, ...], ...]
+    plain_header: bool = True
+    footer: str | None = None
+
+
+def stats_blocks(stats: TableStats) -> list[TableBlock]:
+    """One count table per attribute, then the Decision Attribute's."""
     blocks = [
-        _counts_block(attribute_heading(attribute), attribute.counts)
+        _counts_table(attribute_heading(attribute), "Value", attribute.counts)
         for attribute in stats.attributes
     ]
-    blocks.append(_counts_block(decision_heading(stats), stats.class_counts))
-    return "\n\n".join(blocks)
+    blocks.append(_counts_table(decision_heading(stats), "Class", stats.class_counts))
+    return blocks
 
 
 def attribute_heading(attribute: AttributeStats) -> str:
@@ -120,41 +158,17 @@ def decision_heading(stats: TableStats) -> str:
     return f"{stats.decision} (decision): {classes}"
 
 
-def _counts_block(heading: str, counts: dict[str, int]) -> str:
-    rows = [[value, str(count)] for value, count in counts.items()]
-    return "\n".join([heading, *_aligned_rows(rows)])
-
-
-def _aligned_rows(
-    rows: list[list[str]],
-    justify: Sequence[str] | None = None,
-    *,
-    indent: str = "  ",
-) -> list[str]:
-    """Lines of aligned columns, two spaces apart, after `indent`.
-
-    `justify` holds `"<"` (left) or `">"` (right) per column; by default the
-    first column is left-aligned and the others right-aligned.
-    """
-    widths = [max(map(len, column)) for column in zip(*rows, strict=True)]
-    if justify is None:
-        justify = ["<", *(">" for _ in widths[1:])]
-    return [
-        indent
-        + "  ".join(
-            f"{cell:{side}{width}}"
-            for cell, side, width in zip(row, justify, widths, strict=True)
-        ).rstrip()
-        for row in rows
-    ]
+def _counts_table(heading: str, name: str, counts: dict[str, int]) -> TableBlock:
+    return TableBlock(
+        heading,
+        (Column(name), Column("Count", "right")),
+        tuple((Cell(value), Cell(str(count))) for value, count in counts.items()),
+        plain_header=False,
+    )
 
 
 def _plural(count: int, singular: str, plural: str) -> str:
     return f"{count} {singular if count == 1 else plural}"
-
-
-CONFUSION_CORNER = "actual \\ predicted"
-"""Heading of the first column of a confusion matrix."""
 
 
 def set_name(evaluated_set: EvaluatedSet) -> str:
@@ -175,15 +189,32 @@ def evaluation_heading(set_name: str, result: Evaluation) -> str:
     return f"{set_name}: {cases}, {errors} ({result.error_rate:.1%})"
 
 
-def _confusion_lines(result: Evaluation) -> list[str]:
-    """The confusion matrix as aligned lines: one row per actual class, one
-    column per predicted class."""
-    rows = [[CONFUSION_CORNER, *result.classes]]
-    rows.extend(
-        [actual, *(str(result.confusion[actual][p]) for p in result.classes)]
-        for actual in result.classes
+def _confusion_table(heading: str, result: Evaluation) -> TableBlock:
+    """The confusion matrix: one row per actual class, one column per predicted
+    class."""
+    return TableBlock(
+        heading,
+        (
+            Column("actual \\ predicted"),
+            *(Column(predicted, "right") for predicted in result.classes),
+        ),
+        tuple(
+            (
+                Cell(actual),
+                *(
+                    _count_cell(actual, predicted, result.confusion[actual][predicted])
+                    for predicted in result.classes
+                ),
+            )
+            for actual in result.classes
+        ),
     )
-    return _aligned_rows(rows)
+
+
+def _count_cell(actual: str, predicted: str, count: int) -> Cell:
+    if actual == predicted:
+        return Cell(str(count), "correct")
+    return Cell(str(count), "wrong" if count else "empty")
 
 
 @dataclass(frozen=True)
@@ -194,17 +225,8 @@ class TreeBlock:
     tree: Tree
 
 
-@dataclass(frozen=True)
-class EvaluationBlock:
-    """An evaluation under its heading, e.g.
-    `Pruned tree on Training Set: 14 cases, 5 errors (35.7%)`."""
-
-    heading: str
-    evaluation: Evaluation
-
-
-type Block = TreeBlock | EvaluationBlock
-"""One part of the Experiment report; the adapters print blocks blank-line apart."""
+type Block = TreeBlock | TableBlock
+"""One part of an output; plain text puts blocks one blank line apart."""
 
 
 def experiment_blocks(result: ExperimentResult) -> list[Block]:
@@ -221,60 +243,100 @@ def experiment_blocks(result: ExperimentResult) -> list[Block]:
         for pruned, evaluation in ((False, on_set.unpruned), (True, on_set.pruned)):
             if evaluation is not None:
                 label = f"{tree_name(pruned=pruned)} on {name}"
-                blocks.append(
-                    EvaluationBlock(evaluation_heading(label, evaluation), evaluation)
-                )
+                heading = evaluation_heading(label, evaluation)
+                blocks.append(_confusion_table(heading, evaluation))
     return blocks
 
 
 def render_experiment_plain(result: ExperimentResult) -> str:
-    """The `train` report as plain text, blocks one blank line apart; no final
-    newline."""
-    return "\n\n".join(map(_block_plain, experiment_blocks(result)))
+    """The `train` report as plain text; no final newline."""
+    return render_blocks_plain(experiment_blocks(result))
+
+
+def classification_blocks(result: Classification) -> list[TableBlock]:
+    """One row per Case: its number, predicted class and the probability of each
+    class.
+
+    With decisions, each row also shows the actual class, a `wrong` mark on a
+    wrong prediction, and an accuracy line closes the table.
+    """
+    with_decisions = result.decisions is not None
+    columns = [
+        Column("Case", "right", plain_heading="case"),
+        Column("Predicted", plain_heading="predicted"),
+        *(Column(c, "right") for c in result.classes),
+    ]
+    if with_decisions:
+        columns += [Column("Actual", plain_heading="actual"), Column("")]
+    rows = []
+    for number, (distribution, predicted, actual) in enumerate(result.rows, start=1):
+        probabilities = [Cell(f"{distribution[c]:.3f}") for c in result.classes]
+        if actual is None:
+            rows.append((Cell(str(number)), Cell(predicted), *probabilities))
+            continue
+        correct = actual == predicted
+        rows.append(
+            (
+                Cell(str(number)),
+                Cell(predicted, "correct" if correct else "wrong"),
+                *probabilities,
+                Cell(actual),
+                Cell("") if correct else Cell("wrong", "wrong"),
+            )
+        )
+    footer = _accuracy_text(result) if with_decisions else None
+    return [TableBlock(None, tuple(columns), tuple(rows), footer=footer)]
+
+
+def render_classification_plain(result: Classification) -> str:
+    """The `classify` table as plain text; no final newline."""
+    return render_blocks_plain(classification_blocks(result))
+
+
+def _accuracy_text(result: Classification) -> str:
+    """e.g. `Accuracy: 2 of 3 cases (66.7%)`."""
+    total, correct = len(result.distributions), result.correct
+    share = correct / total if total else 0.0
+    return f"Accuracy: {correct} of {_plural(total, 'case', 'cases')} ({share:.1%})"
+
+
+def render_blocks_plain(blocks: Sequence[Block]) -> str:
+    """The plain adapter: blocks one blank line apart; cell roles are ignored.
+    No final newline."""
+    return "\n\n".join(map(_block_plain, blocks))
 
 
 def _block_plain(block: Block) -> str:
     match block:
         case TreeBlock(heading, tree):
             return f"{heading}:\n{render_plain(tree)}"
-        case EvaluationBlock(heading, evaluation):
-            return "\n".join([heading, *_confusion_lines(evaluation)])
+        case TableBlock(heading, columns, rows, plain_header, footer):
+            lines = [] if heading is None else [heading]
+            texts = [[cell.text for cell in row] for row in rows]
+            if plain_header:
+                texts.insert(0, [_plain_heading(column) for column in columns])
+            justify = ["<" if c.justify == "left" else ">" for c in columns]
+            lines += _aligned_rows(
+                texts, justify, indent="" if heading is None else "  "
+            )
+            if footer is not None:
+                lines += ["", footer]
+            return "\n".join(lines)
 
 
-def render_classification_plain(result: Classification) -> str:
-    """One line per Case: its number, predicted class and the probability of
-    each class; no final newline.
-
-    With decisions, each line also shows the actual class, `wrong` marks a
-    wrong prediction, and an accuracy line follows.
-    """
-    with_decisions = result.decisions is not None
-    heading = ["case", "predicted", *result.classes]
-    if with_decisions:
-        heading += ["actual", ""]
-    rows = [heading]
-    for number, (distribution, predicted, actual) in enumerate(result.rows, start=1):
-        row = [str(number), predicted, *probability_cells(result.classes, distribution)]
-        if actual is not None:
-            row += [actual, "" if actual == predicted else "wrong"]
-        rows.append(row)
-    # Numbers right-aligned, names left-aligned.
-    justify = [">", "<", *(">" for _ in result.classes), "<", "<"][: len(heading)]
-    lines = _aligned_rows(rows, justify, indent="")
-    if with_decisions:
-        lines += ["", accuracy_text(result)]
-    return "\n".join(lines)
+def _plain_heading(column: Column) -> str:
+    return column.heading if column.plain_heading is None else column.plain_heading
 
 
-def probability_cells(
-    classes: Sequence[str], distribution: ClassDistribution
-) -> list[str]:
-    """Each class's probability with three decimals."""
-    return [f"{distribution[c]:.3f}" for c in classes]
-
-
-def accuracy_text(result: Classification) -> str:
-    """e.g. `Accuracy: 2 of 3 cases (66.7%)`."""
-    total, correct = len(result.distributions), result.correct
-    share = correct / total if total else 0.0
-    return f"Accuracy: {correct} of {_plural(total, 'case', 'cases')} ({share:.1%})"
+def _aligned_rows(rows: list[list[str]], justify: list[str], indent: str) -> list[str]:
+    """Lines of aligned columns, two spaces apart, after `indent`; `justify` holds
+    `"<"` (left) or `">"` (right) per column."""
+    widths = [max(map(len, column)) for column in zip(*rows, strict=True)]
+    return [
+        indent
+        + "  ".join(
+            f"{cell:{side}{width}}"
+            for cell, side, width in zip(row, justify, widths, strict=True)
+        ).rstrip()
+        for row in rows
+    ]

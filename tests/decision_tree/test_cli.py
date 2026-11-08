@@ -1,9 +1,11 @@
 from pathlib import Path
 
 import pytest
+from rich.console import Console
 from typer.testing import CliRunner
 
-from decision_tree.cli import app
+from decision_tree.cli import app, print_rich
+from decision_tree.render import Cell, Column, TableBlock
 
 DATA = Path(__file__).parent.parent / "data"
 STOCK_MARKET = str(DATA / "stock_market.txt")
@@ -500,3 +502,27 @@ def test_train_no_prune_prints_the_test_table_reference_tree(options, tree_file)
 
     assert result.exit_code == 0, result.output
     assert unpruned_tree(result.stdout).startswith(expected + "\n")
+
+
+def test_rich_adapter_maps_cell_roles_to_colours():
+    table = TableBlock(
+        "Heading",
+        (Column("name"), Column("count", "right")),
+        (
+            (Cell("plain"), Cell("1", "correct")),
+            (Cell("[x]"), Cell("2", "wrong")),
+            (Cell("z"), Cell("0", "empty")),
+        ),
+        footer="Footer",
+    )
+    out = Console(record=True, force_terminal=True, color_system="standard", width=40)
+
+    print_rich(out, [table])
+
+    text = out.export_text(styles=True)
+    assert "\x1b[1mHeading\x1b[0m" in text
+    assert "\x1b[1mFooter\x1b[0m" in text
+    assert "\x1b[32m1\x1b[0m" in text  # correct: green
+    assert "\x1b[31m2\x1b[0m" in text  # wrong: red
+    assert "\x1b[2m0\x1b[0m" in text  # empty: dim
+    assert "│ plain │" in text and "│ [x]   │" in text  # plain cells, escaped

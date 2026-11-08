@@ -3,7 +3,7 @@
 The only module allowed to import Typer and Rich (ADR 0003).
 """
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from typing import Annotated, NoReturn
 
@@ -14,7 +14,7 @@ from rich.table import Table
 from rich.tree import Tree as RichTree
 
 from decision_tree.builder import BuildOptions, Criterion, build_tree
-from decision_tree.evaluate import Classification, Evaluation, classify_cases
+from decision_tree.evaluate import classify_cases
 from decision_tree.experiment import (
     FileSource,
     HoldOut,
@@ -24,22 +24,18 @@ from decision_tree.experiment import (
 )
 from decision_tree.pruning import DEFAULT_CONFIDENCE
 from decision_tree.render import (
-    CONFUSION_CORNER,
     Block,
-    EvaluationBlock,
+    Cell,
+    TableBlock,
     TreeBlock,
-    accuracy_text,
-    attribute_heading,
     branch_text,
-    decision_heading,
+    classification_blocks,
     experiment_blocks,
-    leaf_counts,
-    probability_cells,
-    render_classification_plain,
-    render_experiment_plain,
-    render_stats_plain,
+    leaf_text,
+    render_blocks_plain,
+    stats_blocks,
 )
-from decision_tree.stats import TableStats, table_stats
+from decision_tree.stats import table_stats
 from decision_tree.table import (
     MISSING_MARKERS,
     DecisionTable,
@@ -232,10 +228,7 @@ def train(
     except SplitError as error:
         _fail(f"--split: {error}")
 
-    if plain or not out.is_terminal:
-        _print_plain(out, render_experiment_plain(result))
-    else:
-        _print_rich_blocks(out, experiment_blocks(result))
+    _print(out, experiment_blocks(result), plain=plain)
 
 
 @app.command()
@@ -278,11 +271,7 @@ def classify(
             min_cases=min_cases,
         ),
     )
-    result = classify_cases(tree, to_classify)
-    if plain or not out.is_terminal:
-        _print_plain(out, render_classification_plain(result))
-    else:
-        _print_rich_classification(out, result)
+    _print(out, classification_blocks(classify_cases(tree, to_classify)), plain=plain)
 
 
 @app.command()
@@ -303,11 +292,7 @@ def stats(
     with _table_errors():
         options = _read_options(header, sep, encoding, missing)
         table = _load_training(file, options, discrete, continuous)
-    summary = table_stats(table)
-    if plain or not out.is_terminal:
-        _print_plain(out, render_stats_plain(summary))
-    else:
-        _print_rich_stats(out, summary)
+    _print(out, stats_blocks(table_stats(table)), plain=plain, spaced=False)
 
 
 def _read_options(
@@ -339,89 +324,51 @@ def _table_errors() -> Iterator[None]:
         _fail(str(error))
 
 
-def _print_plain(out: Console, text: str) -> None:
-    out.print(text, markup=False, highlight=False, soft_wrap=True)
+def _print(
+    out: Console, blocks: Sequence[Block], *, plain: bool, spaced: bool = True
+) -> None:
+    """Plain text with `--plain` or when piped, else Rich."""
+    if plain or not out.is_terminal:
+        out.print(
+            render_blocks_plain(blocks), markup=False, highlight=False, soft_wrap=True
+        )
+    else:
+        print_rich(out, blocks, spaced=spaced)
 
 
-def _print_heading(out: Console, text: str) -> None:
-    out.print(f"[bold]{escape(text)}[/]", highlight=False, soft_wrap=True)
-
-
-def _print_rich_stats(out: Console, summary: TableStats) -> None:
-    for attribute in summary.attributes:
-        _print_heading(out, attribute_heading(attribute))
-        out.print(_count_table("Value", attribute.counts))
-    _print_heading(out, decision_heading(summary))
-    out.print(_count_table("Class", summary.class_counts))
-
-
-def _print_rich_blocks(out: Console, blocks: list[Block]) -> None:
-    """Each block in the given order, one blank line apart."""
+def print_rich(out: Console, blocks: Sequence[Block], *, spaced: bool = True) -> None:
+    """The Rich adapter: each block in order, one blank line apart if `spaced`;
+    cell roles become colours."""
     for i, block in enumerate(blocks):
-        if i:
+        if i and spaced:
             out.print()
         match block:
             case TreeBlock(heading, tree):
                 out.print(_rich_tree(tree, heading))
-            case EvaluationBlock(heading, evaluation):
-                _print_heading(out, heading)
-                out.print(_rich_confusion(evaluation))
+            case TableBlock(heading, columns, rows, _, footer):
+                if heading is not None:
+                    _print_heading(out, heading)
+                table = Table()
+                for column in columns:
+                    table.add_column(escape(column.heading), justify=column.justify)
+                for row in rows:
+                    table.add_row(*map(_rich_cell, row))
+                out.print(table)
+                if footer is not None:
+                    _print_heading(out, footer)
 
 
-def _rich_confusion(result: Evaluation) -> Table:
-    table = Table(escape(CONFUSION_CORNER))
-    for predicted in result.classes:
-        table.add_column(escape(predicted), justify="right")
-    for actual in result.classes:
-        cells = []
-        for predicted in result.classes:
-            count = result.confusion[actual][predicted]
-            cells.append(f"[{_count_style(actual, predicted, count)}]{count}[/]")
-        table.add_row(escape(actual), *cells)
-    return table
+_ROLE_STYLES = {"correct": "green", "wrong": "red", "empty": "dim"}
 
 
-def _print_rich_classification(out: Console, result: Classification) -> None:
-    table = Table("Case", "Predicted", *map(escape, result.classes))
-    table.columns[0].justify = "right"
-    for column in table.columns[2:]:
-        column.justify = "right"
-    if result.decisions is not None:
-        table.add_column("Actual")
-        table.add_column("")
-    for number, (distribution, predicted, actual) in enumerate(result.rows, start=1):
-        cells = probability_cells(result.classes, distribution)
-        if actual is None:
-            table.add_row(str(number), escape(predicted), *cells)
-            continue
-        style = "green" if predicted == actual else "red"
-        table.add_row(
-            str(number),
-            f"[{style}]{escape(predicted)}[/]",
-            *cells,
-            escape(actual),
-            "" if predicted == actual else "[red]wrong[/]",
-        )
-    out.print(table)
-    if result.decisions is not None:
-        _print_heading(out, accuracy_text(result))
+def _rich_cell(cell: Cell) -> str:
+    if cell.role is None:
+        return escape(cell.text)
+    return f"[{_ROLE_STYLES[cell.role]}]{escape(cell.text)}[/]"
 
 
-def _count_style(actual: str, predicted: str, count: int) -> str:
-    """Green for correct predictions, red for errors, dim for empty cells."""
-    if actual == predicted:
-        return "green"
-    if count:
-        return "red"
-    return "dim"
-
-
-def _count_table(heading: str, counts: dict[str, int]) -> Table:
-    table = Table(heading, "Count")
-    table.columns[1].justify = "right"
-    for value, count in counts.items():
-        table.add_row(escape(value), str(count))
-    return table
+def _print_heading(out: Console, text: str) -> None:
+    out.print(f"[bold]{escape(text)}[/]", highlight=False, soft_wrap=True)
 
 
 def _rich_tree(tree: Tree, title: str) -> RichTree:
@@ -443,7 +390,9 @@ def _add_branches(parent: RichTree, node: Node) -> None:
 
 
 def _rich_leaf(leaf: Leaf) -> str:
-    return f"[bold green]{escape(leaf.decision)}[/] [dim]{leaf_counts(leaf)}[/]"
+    # The counts, `(n)` or `(n/errors)`, are the last word of the leaf's text.
+    counts = leaf_text(leaf).rsplit(" ", 1)[1]
+    return f"[bold green]{escape(leaf.decision)}[/] [dim]{counts}[/]"
 
 
 def _fail(message: str) -> NoReturn:
