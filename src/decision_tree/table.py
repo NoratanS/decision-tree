@@ -8,8 +8,8 @@ import math
 import os
 import re
 from collections import Counter
-from collections.abc import Iterable
-from dataclasses import dataclass
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass, replace
 from functools import cached_property
 from typing import Literal
 
@@ -51,6 +51,14 @@ class DecisionTable:
         """Values of one Conditional Attribute, in order of first appearance."""
         return tuple(dict.fromkeys(case[attribute] for case in self.cases))
 
+    def subset(self, indices: Sequence[int]) -> DecisionTable:
+        """The Cases at `indices`, in that order, with the same names and types."""
+        return replace(
+            self,
+            cases=tuple(self.cases[i] for i in indices),
+            decisions=tuple(self.decisions[i] for i in indices),
+        )
+
 
 def load_table(
     path: str | os.PathLike[str],
@@ -60,6 +68,7 @@ def load_table(
     encoding: str = "utf-8",
     discrete: Iterable[str] = (),
     continuous: Iterable[str] = (),
+    like: DecisionTable | None = None,
 ) -> DecisionTable:
     """Read a Decision Table.
 
@@ -69,6 +78,10 @@ def load_table(
 
     Attribute types are inferred (ADR 0001); `discrete` and `continuous` name
     columns whose type is forced instead.
+
+    With `like` (e.g. the Training Set, when reading a Test Set) the file must
+    have that table's column count and takes its attribute types; `discrete`
+    and `continuous` are then ignored.
     """
     name = os.fspath(path)
     if sep is not None and len(sep) != 1:
@@ -95,6 +108,11 @@ def load_table(
         raise TableError(f"{name}: no cases found")
 
     rows = _split_table(name, lines, _CANDIDATES if sep is None else (sep,))
+    if like is not None and len(rows[0]) != len(like.attributes) + 1:
+        raise TableError(
+            f"{name} has {len(rows[0])} columns, expected "
+            f"{len(like.attributes) + 1} like the Training Set"
+        )
     numbers = [number for number, _ in lines]
     if header:
         names = rows.pop(0)
@@ -103,8 +121,13 @@ def load_table(
         names = [*(f"a{i}" for i in range(1, len(rows[0]))), "d"]
 
     cases = tuple(tuple(row[:-1]) for row in rows)
-    kinds = [_infer_kind(column) for column in zip(*cases, strict=True)]
-    for index, kind in _overrides(names, discrete, continuous).items():
+    if like is None:
+        kinds = [_infer_kind(column) for column in zip(*cases, strict=True)]
+        forced = _overrides(names, discrete, continuous)
+    else:
+        kinds = list(like.kinds)
+        forced = dict(enumerate(like.kinds))
+    for index, kind in forced.items():
         if kind == "continuous":
             _check_numeric(name, names[index], numbers, (c[index] for c in cases))
         kinds[index] = kind

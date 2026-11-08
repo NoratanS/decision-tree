@@ -45,6 +45,12 @@ def threshold_branch(number: float, threshold: float) -> Literal["<=", ">"]:
     return "<=" if number <= threshold else ">"
 
 
+def majority(distribution: ClassDistribution) -> str:
+    """The class with the most weight (or probability); the first in file order
+    wins ties (spec R5.4, R7)."""
+    return max(distribution, key=distribution.__getitem__)
+
+
 def classify(tree: Tree, case: Sequence[str]) -> ClassDistribution:
     """Class Distribution for a Case, as probabilities summing to 1 (spec R7).
 

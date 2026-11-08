@@ -12,7 +12,14 @@ from typing import Literal, NamedTuple
 from decision_tree.measures import EPSILON, ClassCounts, Partition, gain, gain_ratio
 from decision_tree.splitting import best_threshold
 from decision_tree.table import DecisionTable
-from decision_tree.tree import ClassDistribution, Leaf, Node, Tree, threshold_branch
+from decision_tree.tree import (
+    ClassDistribution,
+    Leaf,
+    Node,
+    Tree,
+    majority,
+    threshold_branch,
+)
 
 type WeightedCases = list[tuple[int, float]]
 # A plain alias, not a `type` statement, so the CLI can use it as a Typer option.
@@ -70,12 +77,12 @@ class _Builder:
         if sum(distribution.values()) <= 0:
             return Leaf(parent_majority, distribution)
 
-        majority = _majority(distribution)
+        most_common = majority(distribution)
         pure = sum(1 for w in distribution.values() if w > 0) == 1
         counts = list(distribution.values())
         test = None if pure else self._best_test(cases, counts, available)
         if test is None:
-            return Leaf(majority, distribution)
+            return Leaf(most_common, distribution)
 
         table, attribute = self.table, test.attribute
         if test.threshold is None:
@@ -97,7 +104,7 @@ class _Builder:
             attribute=table.attributes[attribute],
             index=attribute,
             branches={
-                value: self.grow(subset, remaining, majority)
+                value: self.grow(subset, remaining, most_common)
                 for value, subset in subsets.items()
             },
             distribution=distribution,
@@ -198,8 +205,3 @@ class _Builder:
         for i, weight in cases:
             distribution[decisions[i]] += weight
         return distribution
-
-
-def _majority(distribution: ClassDistribution) -> str:
-    """Most common Decision Class; the first in file order wins ties."""
-    return max(distribution, key=lambda c: distribution[c])

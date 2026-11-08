@@ -313,3 +313,34 @@ def test_quoted_values_keep_their_spaces(write_table):
     path = write_table('" a ",yes\n  "b"  ,no\n')
 
     assert load_table(path).cases == ((" a ",), ("b",))
+
+
+def golf_training():
+    return load_table(
+        DATA / "golf.txt", header=True, continuous=["temperature", "humidity"]
+    )
+
+
+def test_like_takes_the_attribute_types_of_another_table(write_table):
+    # 1 and 2 alone would be inferred discrete.
+    path = write_table("sunny 1 2 false Play\n")
+
+    table = load_table(path, like=golf_training())
+
+    assert table.kinds == ("discrete", "continuous", "continuous", "discrete")
+
+
+def test_like_with_another_column_count_is_an_error(write_table):
+    path = write_table("sunny 1 Play\n")
+
+    with pytest.raises(TableError, match="3 columns, expected 5"):
+        load_table(path, like=golf_training())
+
+
+def test_like_checks_continuous_values_and_names_the_line(write_table):
+    path = write_table("sunny 1 2 false Play\nsunny 1 high false Play\n")
+
+    with pytest.raises(
+        TableError, match="line 2: a3 is continuous but 'high' is not a number"
+    ):
+        load_table(path, like=golf_training())

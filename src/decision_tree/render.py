@@ -1,5 +1,7 @@
-"""Plain text: C4.5-style trees (spec R9) and table statistics (spec R2)."""
+"""Plain text: C4.5-style trees (spec R9), table statistics (spec R2) and
+evaluations (spec R8)."""
 
+from decision_tree.evaluate import Evaluation
 from decision_tree.stats import AttributeStats, TableStats
 from decision_tree.tree import Leaf, Node, Tree
 
@@ -82,14 +84,47 @@ def decision_heading(stats: TableStats) -> str:
 
 
 def _counts_block(heading: str, counts: dict[str, int]) -> str:
-    value_width = max(map(len, counts))
-    count_width = max(len(str(count)) for count in counts.values())
-    lines = [
-        f"  {value.ljust(value_width)}  {str(count).rjust(count_width)}"
-        for value, count in counts.items()
+    rows = [[value, str(count)] for value, count in counts.items()]
+    return "\n".join([heading, *_aligned_rows(rows)])
+
+
+def _aligned_rows(rows: list[list[str]]) -> list[str]:
+    """Indented lines: the first column left-aligned, the others right-aligned."""
+    widths = [max(map(len, column)) for column in zip(*rows, strict=True)]
+    return [
+        "  "
+        + row[0].ljust(widths[0])
+        + "".join(
+            f"  {cell.rjust(width)}"
+            for cell, width in zip(row[1:], widths[1:], strict=True)
+        )
+        for row in rows
     ]
-    return "\n".join([heading, *lines])
 
 
 def _plural(count: int, singular: str, plural: str) -> str:
     return f"{count} {singular if count == 1 else plural}"
+
+
+CONFUSION_CORNER = "actual \\ predicted"
+"""Heading of the first column of a confusion matrix."""
+
+
+def evaluation_heading(set_name: str, result: Evaluation) -> str:
+    """e.g. `Training Set: 10 cases, 1 error (10.0%)` for `set_name` `Training Set`."""
+    cases = _plural(result.cases, "case", "cases")
+    errors = _plural(result.errors, "error", "errors")
+    return f"{set_name}: {cases}, {errors} ({result.error_rate:.1%})"
+
+
+def render_evaluation_plain(set_name: str, result: Evaluation) -> str:
+    """The heading, then the confusion matrix; no final newline.
+
+    One row per actual class, one column per predicted class.
+    """
+    rows = [[CONFUSION_CORNER, *result.classes]]
+    rows.extend(
+        [actual, *(str(result.confusion[actual][p]) for p in result.classes)]
+        for actual in result.classes
+    )
+    return "\n".join([evaluation_heading(set_name, result), *_aligned_rows(rows)])

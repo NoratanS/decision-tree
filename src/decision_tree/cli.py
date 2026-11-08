@@ -3,6 +3,7 @@
 The only module allowed to import Typer and Rich (ADR 0003).
 """
 
+import random
 from typing import Annotated, NoReturn
 
 import typer
@@ -12,11 +13,15 @@ from rich.table import Table
 from rich.tree import Tree as RichTree
 
 from decision_tree.builder import Criterion, build_tree
+from decision_tree.evaluate import Evaluation, evaluate, hold_out
 from decision_tree.render import (
+    CONFUSION_CORNER,
     attribute_heading,
     branch_text,
     decision_heading,
+    evaluation_heading,
     leaf_counts,
+    render_evaluation_plain,
     render_plain,
     render_stats_plain,
 )
@@ -68,6 +73,7 @@ Continuous = Annotated[
 
 
 _SPLITTING = "Split options"
+_EVALUATION = "Evaluation options"
 
 
 @app.callback()
@@ -112,26 +118,80 @@ def train(
             rich_help_panel=_SPLITTING,
         ),
     ] = 2,
-) -> None:
-    """Build a C4.5 tree and print it."""
-    out = Console()
-    tree = build_tree(
-        _load(
-            file,
-            header=header,
-            sep=sep,
-            encoding=encoding,
-            discrete=discrete,
-            continuous=continuous,
+    test: Annotated[
+        str | None,
+        typer.Option(
+            "--test",
+            help="Test Set file, same columns and loading options as FILE.",
+            rich_help_panel=_EVALUATION,
         ),
+    ] = None,
+    split: Annotated[
+        float | None,
+        typer.Option(
+            "--split",
+            help="Train on this share of FILE (between 0 and 1), test on the rest.",
+            rich_help_panel=_EVALUATION,
+        ),
+    ] = None,
+    seed: Annotated[
+        int | None,
+        typer.Option(
+            "--seed",
+            help="Seed of the --split shuffle. Default: random, printed.",
+            rich_help_panel=_EVALUATION,
+        ),
+    ] = None,
+) -> None:
+    """Build a C4.5 tree, print it and evaluate it."""
+    if split is not None and not 0 < split < 1:
+        raise typer.BadParameter("must be between 0 and 1", param_hint="--split")
+    if test is not None and split is not None:
+        _fail("--test and --split cannot be used together")
+    if seed is not None and split is None:
+        _fail("--seed needs --split")
+    out = Console()
+    training = _load(
+        file,
+        header=header,
+        sep=sep,
+        encoding=encoding,
+        discrete=discrete,
+        continuous=continuous,
+    )
+    tests: list[tuple[str, DecisionTable]] = []
+    if test is not None:
+        test_set = _load(test, header=header, sep=sep, encoding=encoding, like=training)
+        tests.append((f"Test Set ({test})", test_set))
+    elif split is not None:
+        if seed is None:
+            seed = random.randrange(2**32)
+        try:
+            training, held_out = hold_out(training, split, seed=seed)
+        except ValueError as error:
+            _fail(f"--split: {error}")
+        tests.append((f"Test Set (hold-out, --seed {seed})", held_out))
+
+    tree = build_tree(
+        training,
         criterion=criterion,
         quinlan_gain_filter=quinlan_gain_filter,
         min_cases=min_cases,
     )
+    results = [
+        (name, _evaluate(tree, name, table))
+        for name, table in [("Training Set", training), *tests]
+    ]
+
     if plain or not out.is_terminal:
         _print_plain(out, render_plain(tree))
+        print_evaluation = _print_plain_evaluation
     else:
         out.print(_rich_tree(tree, file))
+        print_evaluation = _print_rich_evaluation
+    for name, result in results:
+        out.print()
+        print_evaluation(out, name, result)
 
 
 @app.command()
@@ -170,8 +230,9 @@ def _load(
     header: bool,
     sep: str | None,
     encoding: str,
-    discrete: str,
-    continuous: str,
+    discrete: str = "",
+    continuous: str = "",
+    like: DecisionTable | None = None,
 ) -> DecisionTable:
     try:
         return load_table(
@@ -181,9 +242,17 @@ def _load(
             encoding=encoding,
             discrete=_column_list(discrete),
             continuous=_column_list(continuous),
+            like=like,
         )
     except TableError as error:
         _fail(str(error))
+
+
+def _evaluate(tree: Tree, set_name: str, table: DecisionTable) -> Evaluation:
+    try:
+        return evaluate(tree, table)
+    except ValueError as error:
+        _fail(f"{set_name}: {error}")
 
 
 def _column_list(columns: str) -> list[str]:
@@ -195,12 +264,43 @@ def _print_plain(out: Console, text: str) -> None:
     out.print(text, markup=False, highlight=False, soft_wrap=True)
 
 
+def _print_heading(out: Console, text: str) -> None:
+    out.print(f"[bold]{escape(text)}[/]", highlight=False, soft_wrap=True)
+
+
 def _print_rich_stats(out: Console, summary: TableStats) -> None:
     for attribute in summary.attributes:
-        out.print(f"[bold]{escape(attribute_heading(attribute))}[/]", highlight=False)
+        _print_heading(out, attribute_heading(attribute))
         out.print(_count_table("Value", attribute.counts))
-    out.print(f"[bold]{escape(decision_heading(summary))}[/]", highlight=False)
+    _print_heading(out, decision_heading(summary))
     out.print(_count_table("Class", summary.class_counts))
+
+
+def _print_plain_evaluation(out: Console, set_name: str, result: Evaluation) -> None:
+    _print_plain(out, render_evaluation_plain(set_name, result))
+
+
+def _print_rich_evaluation(out: Console, set_name: str, result: Evaluation) -> None:
+    _print_heading(out, evaluation_heading(set_name, result))
+    table = Table(escape(CONFUSION_CORNER))
+    for predicted in result.classes:
+        table.add_column(escape(predicted), justify="right")
+    for actual in result.classes:
+        cells = []
+        for predicted in result.classes:
+            count = result.confusion[actual][predicted]
+            cells.append(f"[{_count_style(actual, predicted, count)}]{count}[/]")
+        table.add_row(escape(actual), *cells)
+    out.print(table)
+
+
+def _count_style(actual: str, predicted: str, count: int) -> str:
+    """Green for correct predictions, red for errors, dim for empty cells."""
+    if actual == predicted:
+        return "green"
+    if count:
+        return "red"
+    return "dim"
 
 
 def _count_table(heading: str, counts: dict[str, int]) -> Table:
