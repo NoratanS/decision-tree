@@ -5,10 +5,23 @@ import pytest
 from decision_tree.builder import build_tree
 from decision_tree.render import render_plain
 from decision_tree.table import load_table
-from decision_tree.tree import Leaf, Node
+from decision_tree.tree import Leaf, Node, classify
 
 DATA = Path(__file__).parent.parent / "data"
 TESTOWA = DATA / "testowaTabDec.txt"
+# The reference page's golf table, with its row 7 moved to the top so that
+# first-appearance order gives C4.5's branch order (overcast first, true
+# before false). C4.5 takes that order from its .names file instead.
+GOLF = DATA / "golf.txt"
+
+GOLF_TREE = """\
+outlook = overcast: Play (4.0)
+outlook = sunny:
+|   humidity <= 75 : Play (2.0)
+|   humidity > 75 : Don't Play (3.0)
+outlook = rain:
+|   windy = true: Don't Play (2.0)
+|   windy = false: Play (3.0)"""
 
 GIELDA_TREE = """\
 a1 = old: down (3.0)
@@ -50,6 +63,42 @@ def test_gielda_tree_matches_reference_page():
     tree = build_tree(load_table(DATA / "gielda.txt"))
 
     assert render_plain(tree) == GIELDA_TREE
+
+
+def load_golf():
+    return load_table(GOLF, header=True, continuous=["temperature", "humidity"])
+
+
+def test_golf_tree_matches_reference_page():
+    tree = build_tree(load_golf())
+
+    assert render_plain(tree) == GOLF_TREE
+
+
+def test_golf_tree_has_8_nodes_and_no_training_errors():
+    # Reference page, "Evaluation on training data": size 8, 0 errors.
+    table = load_golf()
+    tree = build_tree(table)
+
+    def size(tree):
+        if isinstance(tree, Leaf):
+            return 1
+        return 1 + sum(size(child) for child in tree.branches.values())
+
+    assert size(tree) == 8
+    for case, decision in zip(table.cases, table.decisions, strict=True):
+        assert classify(tree, case)[decision] == 1.0
+
+
+def test_continuous_attribute_is_reused_with_another_threshold(write_table):
+    # no no yes yes no no: no single Threshold separates the classes, so a1 is
+    # tested again below the first Threshold. Thresholds 2 and 4 tie at the root;
+    # the lower one wins (spec R4.6).
+    table = load_table(write_table("1 n\n2 n\n3 y\n4 y\n5 n\n6 n\n"), continuous=["a1"])
+
+    assert render_plain(build_tree(table)) == (
+        "a1 <= 2 : n (2.0)\na1 > 2 :\n|   a1 <= 4 : y (2.0)\n|   a1 > 4 : n (2.0)"
+    )
 
 
 def test_every_node_and_leaf_stores_its_class_distribution():

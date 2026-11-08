@@ -11,6 +11,9 @@ from collections.abc import Sequence
 type ClassCounts = Sequence[float]
 type Partition = Sequence[ClassCounts]
 
+# Gains, and differences between scores, this small are rounding noise.
+EPSILON = 1e-12
+
 
 def entropy(probabilities: Sequence[float]) -> float:
     """I(P) = -sum(p * log2 p)."""

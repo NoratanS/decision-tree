@@ -222,7 +222,7 @@ def _rich_tree(tree: Tree, title: str) -> RichTree:
 
 def _add_branches(parent: RichTree, node: Node) -> None:
     for value, child in node.branches.items():
-        test = f"[cyan]{escape(branch_text(node, value))}[/]"
+        test = f"[cyan]{escape(branch_text(node, value, math_signs=True))}[/]"
         if isinstance(child, Leaf):
             parent.add(f"{test} → {_rich_leaf(child)}")
         else:

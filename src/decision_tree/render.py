@@ -13,9 +13,24 @@ def render_plain(tree: Tree) -> str:
     return "\n".join(lines)
 
 
-def branch_text(node: Node, value: str) -> str:
-    """The outcome of a Node's test that leads to one branch, e.g. `a1 = old`."""
+def branch_text(node: Node, value: str, *, math_signs: bool = False) -> str:
+    """The outcome of a Node's test that leads to one branch.
+
+    `a1 = old` for a discrete test; `humidity <= 75` or `humidity > 75` for a
+    Threshold test, where `value` is the branch key `"<="` or `">"`. With
+    `math_signs`, `<=` is written `≤`.
+    """
+    if node.threshold is not None:
+        sign = "≤" if math_signs and value == "<=" else value
+        return f"{node.attribute} {sign} {number_text(node.threshold)}"
     return f"{node.attribute} = {value}"
+
+
+def number_text(number: float) -> str:
+    """Shortest exact text for a number: `75`, not `75.0`."""
+    if number.is_integer() and abs(number) < 1e16:
+        return str(int(number))
+    return repr(number)
 
 
 def leaf_text(leaf: Leaf) -> str:
@@ -33,11 +48,14 @@ def leaf_counts(leaf: Leaf) -> str:
 
 def _render_node(node: Node, depth: int, lines: list[str]) -> None:
     indent = "|   " * depth
+    # C4.5 puts a space before the colon on Threshold branches.
+    colon = " :" if node.threshold is not None else ":"
     for value, child in node.branches.items():
+        test = f"{indent}{branch_text(node, value)}{colon}"
         if isinstance(child, Leaf):
-            lines.append(f"{indent}{branch_text(node, value)}: {leaf_text(child)}")
+            lines.append(f"{test} {leaf_text(child)}")
         else:
-            lines.append(f"{indent}{branch_text(node, value)}:")
+            lines.append(test)
             _render_node(child, depth + 1, lines)
 
 

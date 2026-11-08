@@ -14,6 +14,16 @@ a1 = mid:
 |   a2 = no: up (2.0)
 a1 = new: up (3.0)
 """
+GOLF_ARGS = [str(DATA / "golf.txt"), "--header", "--continuous", "temperature,humidity"]
+GOLF_TREE = """\
+outlook = overcast: Play (4.0)
+outlook = sunny:
+|   humidity <= 75 : Play (2.0)
+|   humidity > 75 : Don't Play (3.0)
+outlook = rain:
+|   windy = true: Don't Play (2.0)
+|   windy = false: Play (3.0)
+"""
 GIELDA_STATS = """\
 a1 (discrete): 3 values, 0 missing
   old  3
@@ -58,6 +68,21 @@ def test_train_draws_a_rich_tree_in_a_terminal():
     assert result.exit_code == 0
     assert "├──" in result.stdout
     assert "|   " not in result.stdout
+
+
+def test_train_golf_prints_thresholds_like_c45():
+    result = runner.invoke(app, ["train", *GOLF_ARGS])
+
+    assert result.exit_code == 0
+    assert result.stdout == GOLF_TREE
+
+
+def test_rich_tree_shows_thresholds_with_math_signs():
+    result = runner.invoke(app, ["train", *GOLF_ARGS], env={"TTY_COMPATIBLE": "1"})
+
+    assert result.exit_code == 0
+    assert "humidity ≤ 75" in result.stdout
+    assert "humidity > 75" in result.stdout
 
 
 def test_missing_file_gives_one_line_error():

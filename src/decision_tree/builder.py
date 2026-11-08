@@ -1,4 +1,4 @@
-"""Recursive C4.5 tree growth (spec R4.3, R4.4, R4.6, R5).
+"""Recursive C4.5 tree growth (spec R4, R5).
 
 Cases travel as (case index, Case Weight) pairs so every count is weighted
 (ADR 0002). In this version every Case Weight is 1.
@@ -9,23 +9,23 @@ from dataclasses import dataclass
 from functools import cached_property
 from typing import Literal, NamedTuple
 
-from decision_tree.measures import ClassCounts, Partition, gain, gain_ratio
+from decision_tree.measures import EPSILON, ClassCounts, Partition, gain, gain_ratio
+from decision_tree.splitting import best_threshold
 from decision_tree.table import DecisionTable
-from decision_tree.tree import ClassDistribution, Leaf, Node, Tree
+from decision_tree.tree import ClassDistribution, Leaf, Node, Tree, threshold_branch
 
 type WeightedCases = list[tuple[int, float]]
 # A plain alias, not a `type` statement, so the CLI can use it as a Typer option.
 Criterion = Literal["gain", "gain-ratio"]
 """How tests are ranked: Gain (ID3) or Gain Ratio (C4.5)."""
 
-# Gains, and differences between scores, this small are rounding noise.
-_EPSILON = 1e-12
-
 
 class _Candidate(NamedTuple):
     attribute: int
     partition: Partition
     gain: float
+    threshold: float | None = None
+    """The Threshold of a test on a Continuous Attribute; None for a discrete test."""
 
 
 _SCORES: dict[Criterion, Callable[[ClassCounts, _Candidate], float]] = {
@@ -73,15 +73,26 @@ class _Builder:
         majority = _majority(distribution)
         pure = sum(1 for w in distribution.values() if w > 0) == 1
         counts = list(distribution.values())
-        attribute = None if pure else self._best_attribute(cases, counts, available)
-        if attribute is None:
+        test = None if pure else self._best_test(cases, counts, available)
+        if test is None:
             return Leaf(majority, distribution)
 
-        table = self.table
-        subsets: dict[str, WeightedCases] = {v: [] for v in table.values(attribute)}
-        for i, weight in cases:
-            subsets[table.cases[i][attribute]].append((i, weight))
-        remaining = available - {attribute}
+        table, attribute = self.table, test.attribute
+        if test.threshold is None:
+            subsets: dict[str, WeightedCases] = {v: [] for v in table.values(attribute)}
+            for i, weight in cases:
+                subsets[table.cases[i][attribute]].append((i, weight))
+            # A Discrete Attribute is tested at most once per path (spec R5.2).
+            remaining = available - {attribute}
+        else:
+            numbers = self._numbers[attribute]
+            subsets = {"<=": [], ">": []}
+            for i, weight in cases:
+                subsets[threshold_branch(numbers[i], test.threshold)].append(
+                    (i, weight)
+                )
+            # A Continuous Attribute may be tested again with another Threshold.
+            remaining = available
         return Node(
             attribute=table.attributes[attribute],
             index=attribute,
@@ -90,18 +101,25 @@ class _Builder:
                 for value, subset in subsets.items()
             },
             distribution=distribution,
+            threshold=test.threshold,
         )
 
-    def _best_attribute(
+    def _best_test(
         self, cases: WeightedCases, counts: ClassCounts, available: frozenset[int]
-    ) -> int | None:
+    ) -> _Candidate | None:
         """Best candidate by the criterion; the leftmost column wins ties.
 
-        Candidates are the tests that pass the `min_cases` check. The Quinlan
-        filter averages Gain over all of them, zero Gains included (as C4.5).
+        Candidates are the tests that pass the `min_cases` check; a Continuous
+        Attribute offers its best Threshold by Gain. The Quinlan filter
+        averages Gain over all of them, zero Gains included (as C4.5).
         """
         candidates = []
         for attribute in sorted(available):
+            if self.table.kinds[attribute] == "continuous":
+                candidate = self._threshold_test(cases, attribute)
+                if candidate is not None:
+                    candidates.append(candidate)
+                continue
             partition = self._partition(cases, attribute)
             if self._enough_cases(partition):
                 candidates.append(
@@ -110,10 +128,10 @@ class _Builder:
         if not candidates:
             return None
 
-        min_gain = _EPSILON
+        min_gain = EPSILON
         if self.quinlan_gain_filter:
             average = sum(c.gain for c in candidates) / len(candidates)
-            min_gain = max(min_gain, average - _EPSILON)
+            min_gain = max(min_gain, average - EPSILON)
 
         best, best_score = None, 0.0
         for candidate in candidates:
@@ -121,9 +139,24 @@ class _Builder:
                 continue
             score = _SCORES[self.criterion](counts, candidate)
             # A later column must win by more than rounding noise.
-            if best is None or score > best_score + _EPSILON:
-                best, best_score = candidate.attribute, score
+            if best is None or score > best_score + EPSILON:
+                best, best_score = candidate, score
         return best
+
+    def _threshold_test(
+        self, cases: WeightedCases, attribute: int
+    ) -> _Candidate | None:
+        numbers, decisions = self._numbers[attribute], self.table.decisions
+        class_index = self._class_index
+        found = best_threshold(
+            ((numbers[i], class_index[decisions[i]], weight) for i, weight in cases),
+            len(class_index),
+            self._training_values[attribute],
+            min_cases=self.min_cases,
+        )
+        if found is None:
+            return None
+        return _Candidate(attribute, found.partition, found.gain, found.threshold)
 
     def _enough_cases(self, partition: Partition) -> bool:
         """At least two branches hold `min_cases` or more cases."""
@@ -138,6 +171,21 @@ class _Builder:
             counts = branches.setdefault(rows[i][attribute], [0.0] * n_classes)
             counts[class_index[decisions[i]]] += weight
         return list(branches.values())
+
+    @cached_property
+    def _numbers(self) -> dict[int, list[float]]:
+        """Each Continuous Attribute's value in every Case, parsed once."""
+        table = self.table
+        return {
+            a: [float(case[a]) for case in table.cases]
+            for a, kind in enumerate(table.kinds)
+            if kind == "continuous"
+        }
+
+    @cached_property
+    def _training_values(self) -> dict[int, list[float]]:
+        """Distinct values of each Continuous Attribute, ascending."""
+        return {a: sorted(set(numbers)) for a, numbers in self._numbers.items()}
 
     @cached_property
     def _class_index(self) -> dict[str, int]:

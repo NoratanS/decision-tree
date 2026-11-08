@@ -40,3 +40,26 @@ def test_value_not_in_the_tree_is_an_error():
 
     with pytest.raises(ValueError, match="a1 = z"):
         classify(tree, ("z",))
+
+
+def humidity_node():
+    return Node(
+        "humidity",
+        2,
+        {
+            "<=": Leaf("Play", {"Play": 2.0, "Don't Play": 0.0}),
+            ">": Leaf("Don't Play", {"Play": 0.0, "Don't Play": 3.0}),
+        },
+        {"Play": 2.0, "Don't Play": 3.0},
+        threshold=75.0,
+    )
+
+
+@pytest.mark.parametrize(
+    ("humidity", "expected"),
+    [("70", "Play"), ("75", "Play"), ("75.5", "Don't Play"), ("1e2", "Don't Play")],
+)
+def test_threshold_node_sends_values_up_to_the_threshold_left(humidity, expected):
+    distribution = classify(humidity_node(), ("sunny", "72", humidity, "false"))
+
+    assert distribution[expected] == 1.0
