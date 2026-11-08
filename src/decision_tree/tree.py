@@ -45,6 +45,13 @@ class Node:
 type Tree = Node | Leaf
 
 
+def size(tree: Tree) -> int:
+    """Number of Nodes and Leaves, as C4.5 reports a tree's size."""
+    if isinstance(tree, Leaf):
+        return 1
+    return 1 + sum(size(child) for child in tree.branches.values())
+
+
 def threshold_branch(number: float, threshold: float) -> Literal["<=", ">"]:
     """The branch key a value takes at a Threshold test."""
     return "<=" if number <= threshold else ">"

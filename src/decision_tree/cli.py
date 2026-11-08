@@ -20,6 +20,7 @@ from decision_tree.evaluate import (
     evaluate,
     hold_out,
 )
+from decision_tree.pruning import DEFAULT_CONFIDENCE, prune
 from decision_tree.render import (
     CONFUSION_CORNER,
     accuracy_text,
@@ -33,6 +34,8 @@ from decision_tree.render import (
     render_evaluation_plain,
     render_plain,
     render_stats_plain,
+    tree_heading,
+    tree_name,
 )
 from decision_tree.stats import TableStats, table_stats
 from decision_tree.table import (
@@ -125,6 +128,23 @@ MinCases = Annotated[
     ),
 ]
 
+_PRUNING = "Pruning options"
+ConfidenceOption = Annotated[
+    float,
+    typer.Option(
+        "-c",
+        "--confidence",
+        help="Confidence Level in percent, above 0 and at most 100. Lower prunes more.",
+        rich_help_panel=_PRUNING,
+    ),
+]
+NoPrune = Annotated[
+    bool,
+    typer.Option(
+        "--no-prune", help="Keep the unpruned tree only.", rich_help_panel=_PRUNING
+    ),
+]
+
 _EVALUATION = "Evaluation options"
 
 
@@ -148,6 +168,8 @@ def train(
     criterion: CriterionOption = "gain-ratio",
     quinlan_gain_filter: GainFilter = False,
     min_cases: MinCases = 2,
+    confidence: ConfidenceOption = DEFAULT_CONFIDENCE * 100,
+    no_prune: NoPrune = False,
     test: Annotated[
         str | None,
         typer.Option(
@@ -173,7 +195,9 @@ def train(
         ),
     ] = None,
 ) -> None:
-    """Build a C4.5 tree, print it and evaluate it."""
+    """Build a C4.5 tree, prune it, print both and evaluate both."""
+    if not 0 < confidence <= 100:
+        raise typer.BadParameter("must be above 0 and at most 100", param_hint="-c")
     if split is not None and not 0 < split < 1:
         raise typer.BadParameter("must be between 0 and 1", param_hint="--split")
     if test is not None and split is not None:
@@ -210,26 +234,32 @@ def train(
             _fail(f"--split: {error}")
         tests.append((f"Test Set (hold-out, --seed {seed})", held_out))
 
-    tree = build_tree(
+    unpruned = build_tree(
         training,
         criterion=criterion,
         quinlan_gain_filter=quinlan_gain_filter,
         min_cases=min_cases,
     )
-    results = [
-        (name, evaluate(tree, table))
-        for name, table in [("Training Set", training), *tests]
-    ]
+    # (Confidence Level in percent or None, tree)
+    trees: list[tuple[float | None, Tree]] = [(None, unpruned)]
+    if not no_prune:
+        trees.append((confidence, prune(unpruned, confidence / 100)))
 
-    if plain or not out.is_terminal:
-        _print_plain(out, render_plain(tree))
-        print_evaluation = _print_plain_evaluation
-    else:
-        out.print(_rich_tree(tree, file))
-        print_evaluation = _print_rich_evaluation
-    for name, result in results:
-        out.print()
-        print_evaluation(out, name, result)
+    terminal = not plain and out.is_terminal
+    for pruned_at, tree in trees:
+        if pruned_at is not None:
+            out.print()
+        heading = tree_heading(tree, pruned_at=pruned_at)
+        if terminal:
+            out.print(_rich_tree(tree, heading))
+        else:
+            _print_plain(out, f"{heading}:\n{render_plain(tree)}")
+    print_evaluation = _print_rich_evaluation if terminal else _print_plain_evaluation
+    for set_name, table in [("Training Set", training), *tests]:
+        for pruned_at, tree in trees:
+            name = tree_name(pruned=pruned_at is not None)
+            out.print()
+            print_evaluation(out, f"{name} on {set_name}", evaluate(tree, table))
 
 
 @app.command()

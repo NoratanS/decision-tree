@@ -10,9 +10,9 @@ CLI_ONLY = {"typer", "rich"}
 
 
 def test_public_api_is_exported():
-    from decision_tree import build_tree, classify, evaluate, load_table
+    from decision_tree import build_tree, classify, evaluate, load_table, prune
 
-    for function in (load_table, build_tree, classify, evaluate):
+    for function in (load_table, build_tree, prune, classify, evaluate):
         assert callable(function)
 
 

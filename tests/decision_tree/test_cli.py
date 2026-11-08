@@ -14,13 +14,18 @@ a1 = mid:
 |   a2 = no: up (2.0)
 a1 = new: up (3.0)
 """
-GIELDA_TRAINING = (
-    "Training Set: 10 cases, 0 errors (0.0%)\n"
+GIELDA_MATRIX = (
     "  actual \\ predicted  down  up\n"
     "  down                   5   0\n"
     "  up                     0   5\n"
 )
-GIELDA_OUTPUT = GIELDA_TREE + "\n" + GIELDA_TRAINING
+# Pruning at 25% keeps the whole gielda tree.
+GIELDA_OUTPUT = (
+    "Unpruned tree (size 6):\n" + GIELDA_TREE + "\n"
+    "Pruned tree (size 6, Confidence Level 25%):\n" + GIELDA_TREE + "\n"
+    "Unpruned tree on Training Set: 10 cases, 0 errors (0.0%)\n" + GIELDA_MATRIX + "\n"
+    "Pruned tree on Training Set: 10 cases, 0 errors (0.0%)\n" + GIELDA_MATRIX
+)
 GOLF_ARGS = [str(DATA / "golf.txt"), "--header", "--continuous", "temperature,humidity"]
 GOLF_TREE = """\
 outlook = overcast: Play (4.0)
@@ -51,6 +56,12 @@ d (decision): 2 classes
 """
 
 runner = CliRunner()
+TTY = {"TTY_COMPATIBLE": "1"}
+
+
+def unpruned_tree(stdout):
+    """The text of the first tree `train` prints, without its heading."""
+    return stdout.split("\n", 1)[1]
 
 
 def test_train_prints_plain_text_when_piped():
@@ -81,7 +92,7 @@ def test_train_golf_prints_thresholds_like_c45():
     result = runner.invoke(app, ["train", *GOLF_ARGS])
 
     assert result.exit_code == 0
-    assert result.stdout.startswith(GOLF_TREE + "\n")
+    assert unpruned_tree(result.stdout).startswith(GOLF_TREE + "\n")
 
 
 def test_rich_tree_shows_thresholds_with_math_signs():
@@ -203,7 +214,7 @@ def test_train_takes_loading_options(write_table):
     )
 
     assert result.exit_code == 0, result.output
-    assert result.stdout.startswith(
+    assert unpruned_tree(result.stdout).startswith(
         "outlook = słońce: nie (2.0)\noutlook = deszcz: tak (1.0)\n\n"
     )
 
@@ -225,35 +236,39 @@ def test_train_default_uses_gain_ratio_and_m_2():
     result = runner.invoke(app, ["train", TESTOWA])
 
     assert result.exit_code == 0, result.output
-    assert result.stdout.startswith("a3 = 0:\n|   a4 = 1:\n|   |   a2 = 1:")
+    assert unpruned_tree(result.stdout).startswith(
+        "a3 = 0:\n|   a4 = 1:\n|   |   a2 = 1:"
+    )
 
 
 def test_train_m_option_sets_the_minimum_branch_size():
     result = runner.invoke(app, ["train", TESTOWA, "-m", "1"])
 
     assert result.exit_code == 0, result.output
-    assert result.stdout.startswith("a3 = 0:\n|   a4 = 1:\n|   |   a1 = 0:")
+    assert unpruned_tree(result.stdout).startswith(
+        "a3 = 0:\n|   a4 = 1:\n|   |   a1 = 0:"
+    )
 
 
 def test_train_criterion_gain_ranks_tests_by_gain():
     result = runner.invoke(app, ["train", TESTOWA, "--criterion", "gain"])
 
     assert result.exit_code == 0, result.output
-    assert result.stdout.startswith("a1 = ")
+    assert unpruned_tree(result.stdout).startswith("a1 = ")
 
 
 def test_train_criterion_gain_ratio_can_be_named():
     result = runner.invoke(app, ["train", TESTOWA, "--criterion", "gain-ratio"])
 
     assert result.exit_code == 0, result.output
-    assert result.stdout.startswith("a3 = ")
+    assert unpruned_tree(result.stdout).startswith("a3 = ")
 
 
 def test_train_quinlan_gain_filter_changes_the_root():
     result = runner.invoke(app, ["train", TESTOWA, "--quinlan-gain-filter"])
 
     assert result.exit_code == 0, result.output
-    assert result.stdout.startswith("a1 = ")
+    assert unpruned_tree(result.stdout).startswith("a1 = ")
 
 
 @pytest.mark.parametrize(
@@ -275,12 +290,17 @@ def test_train_test_reports_training_and_test_set(write_table):
     result = runner.invoke(app, ["train", GIELDA, "--test", test])
 
     assert result.exit_code == 0, result.output
-    assert result.stdout == (
-        GIELDA_OUTPUT + "\n"
-        f"Test Set ({test}): 2 cases, 1 error (50.0%)\n"
+    test_matrix = (
         "  actual \\ predicted  down  up\n"
         "  down                   0   0\n"
         "  up                     1   1\n"
+    )
+    assert result.stdout == (
+        GIELDA_OUTPUT + "\n"
+        f"Unpruned tree on Test Set ({test}): 2 cases, 1 error (50.0%)\n"
+        + test_matrix
+        + "\n"
+        f"Pruned tree on Test Set ({test}): 2 cases, 1 error (50.0%)\n" + test_matrix
     )
 
 
@@ -510,3 +530,56 @@ def test_classify_takes_the_build_options(write_table):
 
     assert result.exit_code == 0
     assert "   1  down       0.500  0.500" in result.stdout
+
+
+def test_train_no_prune_shows_only_the_unpruned_tree():
+    result = runner.invoke(app, ["train", GIELDA, "--no-prune"])
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout == (
+        "Unpruned tree (size 6):\n" + GIELDA_TREE + "\n"
+        "Unpruned tree on Training Set: 10 cases, 0 errors (0.0%)\n" + GIELDA_MATRIX
+    )
+
+
+def test_train_c_option_sets_the_confidence_level():
+    # At 5% golf's estimates make the whole tree one Leaf; at 25% it stays.
+    result = runner.invoke(app, ["train", *GOLF_ARGS, "-c", "5"])
+
+    assert result.exit_code == 0, result.output
+    assert "Pruned tree (size 1, Confidence Level 5%):\nPlay (14.0/5.0)\n" in (
+        result.stdout
+    )
+    assert "Pruned tree on Training Set: 14 cases, 5 errors (35.7%)" in result.stdout
+
+
+def test_train_confidence_level_may_be_fractional():
+    result = runner.invoke(app, ["train", GIELDA, "--confidence", "12.5"])
+
+    assert result.exit_code == 0, result.output
+    assert "Pruned tree (size 6, Confidence Level 12.5%):" in result.stdout
+
+
+@pytest.mark.parametrize("value", ["0", "-5", "101", "high"])
+def test_train_rejects_a_confidence_level_outside_0_100(value):
+    result = runner.invoke(app, ["train", GIELDA, "-c", value])
+
+    assert result.exit_code == 2
+
+
+def test_train_draws_both_rich_trees_in_a_terminal():
+    result = runner.invoke(app, ["train", *GOLF_ARGS, "-c", "5"], env=TTY)
+
+    assert result.exit_code == 0, result.output
+    assert "Unpruned tree (size 8)" in result.stdout
+    assert "Pruned tree (size 1, Confidence Level 5%)" in result.stdout
+    assert "(14.0/5.0)" in result.stdout
+    assert "Pruned tree on Training Set: 14 cases, 5 errors (35.7%)" in result.stdout
+
+
+def test_train_rich_no_prune_draws_one_tree():
+    result = runner.invoke(app, ["train", GIELDA, "--no-prune"], env=TTY)
+
+    assert result.exit_code == 0, result.output
+    assert "Unpruned tree (size 6)" in result.stdout
+    assert "Pruned tree" not in result.stdout

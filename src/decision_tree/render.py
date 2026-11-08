@@ -5,7 +5,7 @@ from collections.abc import Sequence
 
 from decision_tree.evaluate import Classification, Evaluation
 from decision_tree.stats import AttributeStats, TableStats
-from decision_tree.tree import ClassDistribution, Leaf, Node, Tree
+from decision_tree.tree import ClassDistribution, Leaf, Node, Tree, size
 
 
 def render_plain(tree: Tree) -> str:
@@ -15,6 +15,20 @@ def render_plain(tree: Tree) -> str:
     lines: list[str] = []
     _render_node(tree, 0, lines)
     return "\n".join(lines)
+
+
+def tree_name(*, pruned: bool) -> str:
+    """`Pruned tree` or `Unpruned tree`."""
+    return "Pruned tree" if pruned else "Unpruned tree"
+
+
+def tree_heading(tree: Tree, *, pruned_at: float | None = None) -> str:
+    """`Unpruned tree (size 8)`; with `pruned_at`, the Confidence Level in
+    percent, `Pruned tree (size 5, Confidence Level 25%)`."""
+    name = tree_name(pruned=pruned_at is not None)
+    if pruned_at is None:
+        return f"{name} (size {size(tree)})"
+    return f"{name} (size {size(tree)}, Confidence Level {number_text(pruned_at)}%)"
 
 
 def branch_text(node: Node, value: str, *, math_signs: bool = False) -> str:
