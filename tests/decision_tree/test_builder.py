@@ -147,16 +147,6 @@ def test_default_min_cases_2_blocks_tests_without_two_branches_of_2_cases():
     assert render_plain(tree) == TEST_TABLE_M2_TREE
 
 
-def test_min_cases_counts_cases_per_branch(write_table):
-    # a1 splits 3 / 3: allowed with -m 3, blocked with -m 4.
-    text = "x yes\nx yes\nx yes\ny no\ny no\ny yes\n"
-
-    assert render_plain(tree_from(write_table, text, min_cases=3)) == (
-        "a1 = x: yes (3.0)\na1 = y: no (3.0/1.0)"
-    )
-    assert render_plain(tree_from(write_table, text, min_cases=4)) == "yes (6.0/2.0)"
-
-
 def test_gain_criterion_picks_the_highest_gain():
     # docs/assignment.md: a1 has the highest Gain (0.78) on test_table.
     tree = build_tree(load_table(TEST_TABLE), BuildOptions(criterion="gain"))

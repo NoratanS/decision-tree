@@ -8,8 +8,10 @@ from decision_tree.measures import (
     entropy,
     gain,
     gain_ratio,
+    gain_ratio_of,
     info,
     info_split,
+    known_counts,
     split_info,
 )
 from decision_tree.table import DecisionTable, load_table
@@ -104,10 +106,21 @@ def test_gain_ratio_is_zero_when_all_cases_fall_in_one_branch():
     assert gain_ratio((2, 3), ((2, 3), (0, 0))) == 0.0
 
 
+def test_gain_ratio_of_divides_a_known_gain_by_split_info():
+    # Two branches of 2 cases: Split Info is 1 bit; one branch: Split Info 0.
+    assert gain_ratio_of(0.5, ((2, 0), (0, 2))) == pytest.approx(0.5)
+    assert gain_ratio_of(0.5, ((2, 3), (0, 0))) == 0.0
+
+
 # Quinlan, "C4.5: Programs for Machine Learning", §2.4: golf with one overcast
 # case's outlook missing. Class counts (Play, Don't Play) of the 13 known cases.
 GOLF_KNOWN = (8, 5)
 GOLF_OUTLOOK_KNOWN = ((2, 3), (3, 0), (3, 2))  # sunny, overcast, rain
+
+
+def test_known_counts_are_the_class_counts_summed_over_the_branches():
+    # Quinlan's golf outlook without the missing Case: 8 Play, 5 Don't Play.
+    assert known_counts(GOLF_OUTLOOK_KNOWN) == [8, 5]
 
 
 def test_gain_with_missing_values_is_scaled_by_the_known_fraction():

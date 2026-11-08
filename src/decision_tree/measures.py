@@ -19,6 +19,11 @@ type Partition = Sequence[ClassCounts]
 EPSILON = 1e-12
 
 
+def known_counts(partition: Partition) -> list[float]:
+    """Class counts of the Cases a partition covers: its column sums."""
+    return [sum(column) for column in zip(*partition, strict=True)]
+
+
 def entropy(probabilities: Sequence[float]) -> float:
     """I(P) = -sum(p * log2 p)."""
     # "+ 0.0" turns the -0.0 of a pure distribution into 0.0.
@@ -62,7 +67,13 @@ def gain_ratio(
     counts: ClassCounts, partition: Partition, *, missing: float = 0.0
 ) -> float:
     """Gain Ratio = Gain / Split Info; 0 when Split Info is 0 (a one-branch test)."""
+    return gain_ratio_of(gain(counts, partition, missing=missing), partition, missing)
+
+
+def gain_ratio_of(
+    known_gain: float, partition: Partition, missing: float = 0.0
+) -> float:
+    """Gain Ratio of a test whose Gain is already known, so it is not computed
+    again; 0 when Split Info is 0."""
     split = split_info(partition, missing=missing)
-    if split <= 0:
-        return 0.0
-    return gain(counts, partition, missing=missing) / split
+    return known_gain / split if split > 0 else 0.0

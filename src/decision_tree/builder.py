@@ -8,10 +8,14 @@ the tested attribute goes down every branch with a fraction of its weight.
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from functools import cached_property
-from typing import Literal, NamedTuple
+from typing import Literal
 
-from decision_tree.measures import EPSILON, Partition, gain, gain_ratio
-from decision_tree.splitting import best_threshold
+from decision_tree.measures import EPSILON, gain_ratio_of
+from decision_tree.splitting import (
+    CandidateTest,
+    discrete_candidate,
+    threshold_candidate,
+)
 from decision_tree.table import DecisionTable
 from decision_tree.tree import (
     ClassDistribution,
@@ -19,7 +23,6 @@ from decision_tree.tree import (
     Leaf,
     Node,
     Test,
-    ThresholdTest,
     Tree,
     majority,
 )
@@ -30,26 +33,10 @@ Criterion = Literal["gain", "gain-ratio"]
 """How tests are ranked: Gain (ID3) or Gain Ratio (C4.5)."""
 
 
-class _Candidate(NamedTuple):
-    test: Test
-    partition: Partition
-    """Weighted class counts per branch, known values only."""
-    missing: float
-    """Weight of the Cases with a Missing Value for the attribute."""
-    gain: float
-
-
-_SCORES: dict[Criterion, Callable[[_Candidate], float]] = {
+_SCORES: dict[Criterion, Callable[[CandidateTest], float]] = {
     "gain": lambda c: c.gain,
-    "gain-ratio": lambda c: gain_ratio(
-        _known_counts(c.partition), c.partition, missing=c.missing
-    ),
+    "gain-ratio": lambda c: gain_ratio_of(c.gain, c.partition, c.missing),
 }
-
-
-def _known_counts(partition: Partition) -> list[float]:
-    """Class counts of the Cases a partition covers: its column sums."""
-    return [sum(column) for column in zip(*partition, strict=True)]
 
 
 @dataclass(frozen=True)
@@ -148,20 +135,16 @@ class _Builder:
 
     def _best_test(
         self, cases: WeightedCases, available: frozenset[int]
-    ) -> _Candidate | None:
-        """Best candidate by the criterion; the leftmost column wins ties.
+    ) -> CandidateTest | None:
+        """Best Candidate Test by the criterion; the leftmost column wins ties.
 
-        Candidates are the tests that pass the `min_cases` check on the Cases
-        whose value is known; a Continuous Attribute offers its best Threshold
-        by Gain. The Quinlan filter averages Gain over all of them, zero Gains
-        included (as C4.5).
+        A Continuous Attribute offers its best Threshold by Gain. The Quinlan
+        filter averages Gain over all Candidate Tests, zero Gains included (as
+        C4.5).
         """
         candidates = []
         for attribute in sorted(available):
-            if self.table.kinds[attribute] == "continuous":
-                candidate = self._threshold_test(cases, attribute)
-            else:
-                candidate = self._discrete_test(cases, attribute)
+            candidate = self._candidate_test(cases, attribute)
             if candidate is not None:
                 candidates.append(candidate)
         if not candidates:
@@ -183,75 +166,33 @@ class _Builder:
                 best, best_score = candidate, score
         return best
 
-    def _discrete_test(self, cases: WeightedCases, attribute: int) -> _Candidate | None:
-        """The test on a Discrete Attribute, scored on the Cases with a known
-        value; None if it fails the `min_cases` check."""
-        rows, decisions = self.table.cases, self.table.decisions
-        class_index, n_classes = self._class_index, len(self._class_index)
-        branches: dict[str, list[float]] = {}
-        missing = 0.0
-        for i, weight in cases:
-            value = rows[i][attribute]
-            if value is None:
-                missing += weight
-                continue
-            counts = branches.setdefault(value, [0.0] * n_classes)
-            counts[class_index[decisions[i]]] += weight
-        partition = list(branches.values())
-        if not self._enough_cases(partition):
-            return None
-        test = DiscreteTest(
-            self.table.attributes[attribute], attribute, self._values[attribute]
-        )
-        return self._candidate(test, partition, missing)
-
-    def _threshold_test(
+    def _candidate_test(
         self, cases: WeightedCases, attribute: int
-    ) -> _Candidate | None:
-        """The best Threshold test on the Cases with a known value."""
-        numbers, decisions = self._numbers[attribute], self.table.decisions
-        class_index = self._class_index
-        known = []
-        missing = 0.0
-        for i, weight in cases:
-            number = numbers[i]
-            if number is None:
-                missing += weight
-            else:
-                known.append((number, class_index[decisions[i]], weight))
-        if not known:
-            return None
-        found = best_threshold(
-            known,
-            len(class_index),
-            self._training_values[attribute],
-            min_cases=self.options.min_cases,
+    ) -> CandidateTest | None:
+        """The Candidate Test on `attribute` at a Node holding `cases`."""
+        column, class_of = self._columns[attribute], self._class_of
+        values = [(column[i], class_of[i], weight) for i, weight in cases]
+        n_classes, min_cases = len(self.table.classes), self.options.min_cases
+        if self.table.kinds[attribute] == "continuous":
+            return threshold_candidate(
+                self.table.attributes[attribute],
+                attribute,
+                values,
+                n_classes,
+                self._training_values[attribute],
+                min_cases=min_cases,
+            )
+        return discrete_candidate(
+            self._discrete_tests[attribute], values, n_classes, min_cases=min_cases
         )
-        if found is None:
-            return None
-        test = ThresholdTest(
-            self.table.attributes[attribute], attribute, found.threshold
-        )
-        return self._candidate(test, found.partition, missing)
-
-    def _candidate(
-        self, test: Test, partition: Partition, missing: float
-    ) -> _Candidate:
-        """A test scored on the known Cases, Gain scaled by the known fraction."""
-        score = gain(_known_counts(partition), partition, missing=missing)
-        return _Candidate(test, partition, missing, score)
-
-    def _enough_cases(self, partition: Partition) -> bool:
-        """At least two branches hold `min_cases` or more cases."""
-        min_cases = self.options.min_cases
-        return sum(1 for branch in partition if sum(branch) >= min_cases) >= 2
 
     @cached_property
-    def _values(self) -> dict[int, tuple[str, ...]]:
-        """Known values of each Discrete Attribute, in file order."""
+    def _discrete_tests(self) -> dict[int, DiscreteTest]:
+        """The test on each Discrete Attribute: one branch per value in the
+        Training Set, in file order."""
         table = self.table
         return {
-            a: table.values(a)
+            a: DiscreteTest(table.attributes[a], a, table.values(a))
             for a, kind in enumerate(table.kinds)
             if kind == "discrete"
         }
@@ -286,9 +227,10 @@ class _Builder:
         }
 
     @cached_property
-    def _class_index(self) -> dict[str, int]:
-        """Position of each Decision Class in a class counts list."""
-        return {c: k for k, c in enumerate(self.table.classes)}
+    def _class_of(self) -> list[int]:
+        """Each Case's Decision Class, as its position in a class counts list."""
+        class_index = {c: k for k, c in enumerate(self.table.classes)}
+        return [class_index[d] for d in self.table.decisions]
 
     def _distribution(self, cases: WeightedCases) -> ClassDistribution:
         decisions = self.table.decisions
