@@ -34,12 +34,21 @@ def test_empty_leaf_gives_its_class_with_probability_one():
     assert classify(tree, ()) == {"yes": 1.0, "no": 0.0}
 
 
-# Interim: ticket 08 replaces this with "unseen value is treated as missing" (R7).
-def test_value_not_in_the_tree_is_an_error():
-    tree = Node("a1", 0, {"x": Leaf("yes", {"yes": 1.0})}, {"yes": 1.0})
+def test_golf_outlook_never_seen_in_training_is_classified_as_missing():
+    table = load_table(
+        DATA / "golf.txt", header=True, continuous=["temperature", "humidity"]
+    )
+    tree = build_tree(table)
 
-    with pytest.raises(ValueError, match="a1 = z"):
-        classify(tree, ("z",))
+    foggy = classify(tree, ("foggy", "72", "90", "true"))
+
+    assert foggy == classify(tree, (None, "72", "90", "true"))
+    # overcast 4/14 Play, sunny 5/14 Don't Play (humidity 90 > 75), rain 5/14
+    # Don't Play (windy).
+    assert foggy == {
+        "Play": pytest.approx(4 / 14),
+        "Don't Play": pytest.approx(10 / 14),
+    }
 
 
 def humidity_node():

@@ -1,9 +1,11 @@
-"""Plain text: C4.5-style trees (spec R9), table statistics (spec R2) and
-evaluations (spec R8)."""
+"""Plain text: C4.5-style trees (spec R9), table statistics (spec R2),
+evaluations (spec R8) and classified Cases (spec R10)."""
 
-from decision_tree.evaluate import Evaluation
+from collections.abc import Sequence
+
+from decision_tree.evaluate import Classification, Evaluation
 from decision_tree.stats import AttributeStats, TableStats
-from decision_tree.tree import Leaf, Node, Tree
+from decision_tree.tree import ClassDistribution, Leaf, Node, Tree
 
 
 def render_plain(tree: Tree) -> str:
@@ -88,16 +90,26 @@ def _counts_block(heading: str, counts: dict[str, int]) -> str:
     return "\n".join([heading, *_aligned_rows(rows)])
 
 
-def _aligned_rows(rows: list[list[str]]) -> list[str]:
-    """Indented lines: the first column left-aligned, the others right-aligned."""
+def _aligned_rows(
+    rows: list[list[str]],
+    justify: Sequence[str] | None = None,
+    *,
+    indent: str = "  ",
+) -> list[str]:
+    """Lines of aligned columns, two spaces apart, after `indent`.
+
+    `justify` holds `"<"` (left) or `">"` (right) per column; by default the
+    first column is left-aligned and the others right-aligned.
+    """
     widths = [max(map(len, column)) for column in zip(*rows, strict=True)]
+    if justify is None:
+        justify = ["<", *(">" for _ in widths[1:])]
     return [
-        "  "
-        + row[0].ljust(widths[0])
-        + "".join(
-            f"  {cell.rjust(width)}"
-            for cell, width in zip(row[1:], widths[1:], strict=True)
-        )
+        indent
+        + "  ".join(
+            f"{cell:{side}{width}}"
+            for cell, side, width in zip(row, justify, widths, strict=True)
+        ).rstrip()
         for row in rows
     ]
 
@@ -128,3 +140,42 @@ def render_evaluation_plain(set_name: str, result: Evaluation) -> str:
         for actual in result.classes
     )
     return "\n".join([evaluation_heading(set_name, result), *_aligned_rows(rows)])
+
+
+def render_classification_plain(result: Classification) -> str:
+    """One line per Case: its number, predicted class and the probability of
+    each class; no final newline.
+
+    With decisions, each line also shows the actual class, `wrong` marks a
+    wrong prediction, and an accuracy line follows.
+    """
+    with_decisions = result.decisions is not None
+    heading = ["case", "predicted", *result.classes]
+    if with_decisions:
+        heading += ["actual", ""]
+    rows = [heading]
+    for number, (distribution, predicted, actual) in enumerate(result.rows, start=1):
+        row = [str(number), predicted, *probability_cells(result.classes, distribution)]
+        if actual is not None:
+            row += [actual, "" if actual == predicted else "wrong"]
+        rows.append(row)
+    # Numbers right-aligned, names left-aligned.
+    justify = [">", "<", *(">" for _ in result.classes), "<", "<"][: len(heading)]
+    lines = _aligned_rows(rows, justify, indent="")
+    if with_decisions:
+        lines += ["", accuracy_text(result)]
+    return "\n".join(lines)
+
+
+def probability_cells(
+    classes: Sequence[str], distribution: ClassDistribution
+) -> list[str]:
+    """Each class's probability with three decimals."""
+    return [f"{distribution[c]:.3f}" for c in classes]
+
+
+def accuracy_text(result: Classification) -> str:
+    """e.g. `Accuracy: 2 of 3 cases (66.7%)`."""
+    total, correct = len(result.distributions), result.correct
+    share = correct / total if total else 0.0
+    return f"Accuracy: {correct} of {_plural(total, 'case', 'cases')} ({share:.1%})"

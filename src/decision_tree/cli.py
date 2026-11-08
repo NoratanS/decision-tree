@@ -13,20 +13,35 @@ from rich.table import Table
 from rich.tree import Tree as RichTree
 
 from decision_tree.builder import Criterion, build_tree
-from decision_tree.evaluate import Evaluation, evaluate, hold_out
+from decision_tree.evaluate import (
+    Classification,
+    Evaluation,
+    classify_cases,
+    evaluate,
+    hold_out,
+)
 from decision_tree.render import (
     CONFUSION_CORNER,
+    accuracy_text,
     attribute_heading,
     branch_text,
     decision_heading,
     evaluation_heading,
     leaf_counts,
+    probability_cells,
+    render_classification_plain,
     render_evaluation_plain,
     render_plain,
     render_stats_plain,
 )
 from decision_tree.stats import TableStats, table_stats
-from decision_tree.table import MISSING_MARKERS, DecisionTable, TableError, load_table
+from decision_tree.table import (
+    MISSING_MARKERS,
+    DecisionTable,
+    TableError,
+    load_cases,
+    load_table,
+)
 from decision_tree.tree import Leaf, Node, Tree
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
@@ -83,6 +98,33 @@ Missing = Annotated[
 
 
 _SPLITTING = "Split options"
+CriterionOption = Annotated[
+    Criterion,
+    typer.Option(
+        "--criterion",
+        help="Rank tests by gain (ID3) or gain-ratio (C4.5).",
+        rich_help_panel=_SPLITTING,
+    ),
+]
+GainFilter = Annotated[
+    bool,
+    typer.Option(
+        "--quinlan-gain-filter",
+        help="Only tests with at least the average Gain compete.",
+        rich_help_panel=_SPLITTING,
+    ),
+]
+MinCases = Annotated[
+    int,
+    typer.Option(
+        "-m",
+        "--min-cases",
+        min=1,
+        help="A test needs two branches with at least this many cases.",
+        rich_help_panel=_SPLITTING,
+    ),
+]
+
 _EVALUATION = "Evaluation options"
 
 
@@ -103,32 +145,9 @@ def train(
     discrete: Discrete = "",
     continuous: Continuous = "",
     missing: Missing = _DEFAULT_MISSING,
-    criterion: Annotated[
-        Criterion,
-        typer.Option(
-            "--criterion",
-            help="Rank tests by gain (ID3) or gain-ratio (C4.5).",
-            rich_help_panel=_SPLITTING,
-        ),
-    ] = "gain-ratio",
-    quinlan_gain_filter: Annotated[
-        bool,
-        typer.Option(
-            "--quinlan-gain-filter",
-            help="Only tests with at least the average Gain compete.",
-            rich_help_panel=_SPLITTING,
-        ),
-    ] = False,
-    min_cases: Annotated[
-        int,
-        typer.Option(
-            "-m",
-            "--min-cases",
-            min=1,
-            help="A test needs two branches with at least this many cases.",
-            rich_help_panel=_SPLITTING,
-        ),
-    ] = 2,
+    criterion: CriterionOption = "gain-ratio",
+    quinlan_gain_filter: GainFilter = False,
+    min_cases: MinCases = 2,
     test: Annotated[
         str | None,
         typer.Option(
@@ -198,7 +217,7 @@ def train(
         min_cases=min_cases,
     )
     results = [
-        (name, _evaluate(tree, name, table))
+        (name, evaluate(tree, table))
         for name, table in [("Training Set", training), *tests]
     ]
 
@@ -211,6 +230,67 @@ def train(
     for name, result in results:
         out.print()
         print_evaluation(out, name, result)
+
+
+@app.command()
+def classify(
+    train_file: Annotated[
+        str,
+        typer.Argument(metavar="TRAIN", help="Training Set the tree is built from."),
+    ],
+    cases: Annotated[
+        str,
+        typer.Argument(
+            metavar="CASES",
+            help="Cases to classify: TRAIN's columns, with or without the decision.",
+        ),
+    ],
+    plain: Annotated[
+        bool, typer.Option("--plain", help="Plain text table, even in a terminal.")
+    ] = False,
+    header: Header = False,
+    sep: Sep = None,
+    encoding: Encoding = "utf-8",
+    discrete: Discrete = "",
+    continuous: Continuous = "",
+    missing: Missing = _DEFAULT_MISSING,
+    criterion: CriterionOption = "gain-ratio",
+    quinlan_gain_filter: GainFilter = False,
+    min_cases: MinCases = 2,
+) -> None:
+    """Build a tree from TRAIN and classify each case of CASES."""
+    out = Console()
+    training = _load(
+        train_file,
+        header=header,
+        sep=sep,
+        encoding=encoding,
+        discrete=discrete,
+        continuous=continuous,
+        missing=missing,
+    )
+    try:
+        to_classify = load_cases(
+            cases,
+            like=training,
+            header=header,
+            sep=sep,
+            encoding=encoding,
+            missing=_marker_list(missing),
+        )
+    except TableError as error:
+        _fail(str(error))
+    tree = build_tree(
+        training,
+        criterion=criterion,
+        quinlan_gain_filter=quinlan_gain_filter,
+        min_cases=min_cases,
+    )
+    result = classify_cases(tree, to_classify)
+    if plain or not out.is_terminal:
+        _print_plain(out, render_classification_plain(result))
+    else:
+        _print_rich_classification(out, result)
 
 
 @app.command()
@@ -271,13 +351,6 @@ def _load(
         _fail(str(error))
 
 
-def _evaluate(tree: Tree, set_name: str, table: DecisionTable) -> Evaluation:
-    try:
-        return evaluate(tree, table)
-    except ValueError as error:
-        _fail(f"{set_name}: {error}")
-
-
 def _column_list(columns: str) -> list[str]:
     """`"a1, a3"` → `["a1", "a3"]`."""
     return [name.strip() for name in columns.split(",") if name.strip()]
@@ -320,6 +393,32 @@ def _print_rich_evaluation(out: Console, set_name: str, result: Evaluation) -> N
             cells.append(f"[{_count_style(actual, predicted, count)}]{count}[/]")
         table.add_row(escape(actual), *cells)
     out.print(table)
+
+
+def _print_rich_classification(out: Console, result: Classification) -> None:
+    table = Table("Case", "Predicted", *map(escape, result.classes))
+    table.columns[0].justify = "right"
+    for column in table.columns[2:]:
+        column.justify = "right"
+    if result.decisions is not None:
+        table.add_column("Actual")
+        table.add_column("")
+    for number, (distribution, predicted, actual) in enumerate(result.rows, start=1):
+        cells = probability_cells(result.classes, distribution)
+        if actual is None:
+            table.add_row(str(number), escape(predicted), *cells)
+            continue
+        style = "green" if predicted == actual else "red"
+        table.add_row(
+            str(number),
+            f"[{style}]{escape(predicted)}[/]",
+            *cells,
+            escape(actual),
+            "" if predicted == actual else "[red]wrong[/]",
+        )
+    out.print(table)
+    if result.decisions is not None:
+        _print_heading(out, accuracy_text(result))
 
 
 def _count_style(actual: str, predicted: str, count: int) -> str:

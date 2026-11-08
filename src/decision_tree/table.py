@@ -97,6 +97,93 @@ def load_table(
     have that table's column count and takes its attribute types; `discrete`
     and `continuous` are then ignored.
     """
+    name, numbers, header_names, rows = _read_rows(
+        path, sep=sep, header=header, encoding=encoding, min_columns=2
+    )
+    if like is not None and len(rows[0]) != len(like.attributes) + 1:
+        raise TableError(
+            f"{name} has {len(rows[0])} columns, expected "
+            f"{len(like.attributes) + 1} like the Training Set"
+        )
+    names = header_names or [*(f"a{i}" for i in range(1, len(rows[0]))), "d"]
+    markers = frozenset(missing)
+    decisions = _decisions(name, numbers, rows, markers)
+    cases = _cases(rows, len(rows[0]) - 1, markers)
+    if like is None:
+        kinds = [_infer_kind(column) for column in zip(*cases, strict=True)]
+        forced = _overrides(names, discrete, continuous)
+    else:
+        kinds = list(like.kinds)
+        forced = dict(enumerate(like.kinds))
+    _check_continuous(name, names, forced, numbers, cases)
+    for index, kind in forced.items():
+        kinds[index] = kind
+
+    return DecisionTable(
+        attributes=tuple(names[:-1]),
+        decision=names[-1],
+        cases=cases,
+        decisions=decisions,
+        kinds=tuple(kinds),
+    )
+
+
+@dataclass(frozen=True)
+class Cases:
+    """Cases to classify, with their decisions if the file has them."""
+
+    cases: tuple[tuple[Value, ...], ...]
+    """Conditional Attribute values of each Case; None is a Missing Value."""
+    decisions: tuple[str, ...] | None
+    """Decision Class of each Case, parallel to `cases`; None if the file has
+    no decision column."""
+
+
+def load_cases(
+    path: str | os.PathLike[str],
+    *,
+    like: DecisionTable,
+    sep: str | None = None,
+    header: bool = False,
+    encoding: str = "utf-8",
+    missing: Iterable[str] = MISSING_MARKERS,
+) -> Cases:
+    """Read Cases to classify with a tree built from `like` (spec R10).
+
+    The file has one column per Conditional Attribute of `like`, optionally
+    followed by the decision. The attribute types are `like`'s. The other
+    options are as in `load_table`; a header line is skipped.
+    """
+    name, numbers, _, rows = _read_rows(
+        path, sep=sep, header=header, encoding=encoding, min_columns=1
+    )
+    width = len(like.attributes)
+    if len(rows[0]) not in (width, width + 1):
+        raise TableError(
+            f"{name} has {len(rows[0])} columns, expected {width} (without a "
+            f"decision) or {width + 1} like the Training Set"
+        )
+    markers = frozenset(missing)
+    decisions = (
+        _decisions(name, numbers, rows, markers) if len(rows[0]) > width else None
+    )
+    cases = _cases(rows, width, markers)
+    _check_continuous(
+        name, like.attributes, dict(enumerate(like.kinds)), numbers, cases
+    )
+    return Cases(cases, decisions)
+
+
+def _read_rows(
+    path: str | os.PathLike[str],
+    *,
+    sep: str | None,
+    header: bool,
+    encoding: str,
+    min_columns: int,
+) -> tuple[str, list[int], list[str] | None, list[list[str]]]:
+    """File name, line number of each row, header names (or None), and the rows
+    split into trimmed values."""
     name = os.fspath(path)
     if sep is not None and len(sep) != 1:
         raise TableError(f"separator must be a single character, got {sep!r}")
@@ -121,46 +208,36 @@ def load_table(
     if len(lines) <= header:
         raise TableError(f"{name}: no cases found")
 
-    rows = _split_table(name, lines, _CANDIDATES if sep is None else (sep,))
-    if like is not None and len(rows[0]) != len(like.attributes) + 1:
-        raise TableError(
-            f"{name} has {len(rows[0])} columns, expected "
-            f"{len(like.attributes) + 1} like the Training Set"
-        )
+    candidates = _CANDIDATES if sep is None else (sep,)
+    rows = _split_table(name, lines, candidates, min_columns)
     numbers = [number for number, _ in lines]
+    names = None
     if header:
         names = rows.pop(0)
         _check_header(name, numbers.pop(0), names)
-    else:
-        names = [*(f"a{i}" for i in range(1, len(rows[0]))), "d"]
+    return name, numbers, names, rows
 
-    markers = frozenset(missing)
+
+def _decisions(
+    name: str, numbers: list[int], rows: list[list[str]], markers: frozenset[str]
+) -> tuple[str, ...]:
+    """The last column; a Missing Value marker there is an error."""
     for number, row in zip(numbers, rows, strict=True):
         if row[-1] in markers:
             raise TableError(
                 f"{name}, line {number}: the decision is missing "
                 f"({row[-1]!r} is a Missing Value marker)"
             )
-    cases = tuple(
-        tuple(None if value in markers else value for value in row[:-1]) for row in rows
-    )
-    if like is None:
-        kinds = [_infer_kind(column) for column in zip(*cases, strict=True)]
-        forced = _overrides(names, discrete, continuous)
-    else:
-        kinds = list(like.kinds)
-        forced = dict(enumerate(like.kinds))
-    for index, kind in forced.items():
-        if kind == "continuous":
-            _check_numeric(name, names[index], numbers, (c[index] for c in cases))
-        kinds[index] = kind
+    return tuple(row[-1] for row in rows)
 
-    return DecisionTable(
-        attributes=tuple(names[:-1]),
-        decision=names[-1],
-        cases=cases,
-        decisions=tuple(row[-1] for row in rows),
-        kinds=tuple(kinds),
+
+def _cases(
+    rows: list[list[str]], width: int, markers: frozenset[str]
+) -> tuple[tuple[Value, ...], ...]:
+    """The first `width` columns, with Missing Value markers as None."""
+    return tuple(
+        tuple(None if value in markers else value for value in row[:width])
+        for row in rows
     )
 
 
@@ -189,6 +266,21 @@ def _overrides(
                 raise TableError(f"{column!r} is forced both discrete and continuous")
             forced[index] = kind
     return forced
+
+
+def _check_continuous(
+    name: str,
+    names: Sequence[str],
+    kinds: dict[int, Kind],
+    numbers: Iterable[int],
+    cases: tuple[tuple[Value, ...], ...],
+) -> None:
+    """Every known value in a column of Kind continuous must be a number."""
+    numbers = list(numbers)
+    for index, kind in kinds.items():
+        if kind == "continuous":
+            column = (case[index] for case in cases)
+            _check_numeric(name, names[index], numbers, column)
 
 
 def _check_numeric(
@@ -237,7 +329,10 @@ class _LineError(Exception):
 
 
 def _split_table(
-    name: str, lines: list[tuple[int, str]], candidates: tuple[str | None, ...]
+    name: str,
+    lines: list[tuple[int, str]],
+    candidates: tuple[str | None, ...],
+    min_columns: int,
 ) -> list[list[str]]:
     """Split with the candidate that gives the most columns on every line.
 
@@ -248,7 +343,7 @@ def _split_table(
     errors: list[_LineError] = []
     for sep in candidates:
         try:
-            fitting[sep] = _split_all(lines, sep)
+            fitting[sep] = _split_all(lines, sep, min_columns)
         except _LineError as error:
             errors.append(error)
     if not fitting:
@@ -277,7 +372,9 @@ def _contains(value: str, sep: str | None) -> bool:
     return sep in value
 
 
-def _split_all(lines: list[tuple[int, str]], sep: str | None) -> list[list[str]]:
+def _split_all(
+    lines: list[tuple[int, str]], sep: str | None, min_columns: int
+) -> list[list[str]]:
     rows: list[list[str]] = []
     for number, line in lines:
         try:
@@ -285,8 +382,10 @@ def _split_all(lines: list[tuple[int, str]], sep: str | None) -> list[list[str]]
         except ValueError as error:
             raise _LineError(number, str(error)) from None
         if not rows:
-            if len(values) < 2:
-                raise _LineError(number, "a Decision Table needs at least two columns")
+            if len(values) < min_columns:
+                raise _LineError(
+                    number, f"a Decision Table needs at least {min_columns} columns"
+                )
         elif len(values) != len(rows[0]):
             raise _LineError(
                 number,

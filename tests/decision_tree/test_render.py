@@ -1,6 +1,7 @@
 import pytest
 
-from decision_tree.render import render_plain
+from decision_tree.evaluate import Classification
+from decision_tree.render import render_classification_plain, render_plain
 from decision_tree.tree import Leaf, Node
 
 
@@ -69,3 +70,41 @@ def test_thresholds_print_without_a_needless_decimal_point(threshold, text):
     )
 
     assert render_plain(tree).startswith(f"a1 <= {text} : ")
+
+
+GOLF_CLASSES = ("Play", "Don't Play")
+
+
+def test_classification_shows_each_case_with_its_class_and_distribution():
+    result = Classification(
+        GOLF_CLASSES,
+        ({"Play": 0.4, "Don't Play": 0.6}, {"Play": 1.0, "Don't Play": 0.0}),
+        decisions=None,
+    )
+
+    assert render_classification_plain(result) == (
+        "case  predicted    Play  Don't Play\n"
+        "   1  Don't Play  0.400       0.600\n"
+        "   2  Play        1.000       0.000"
+    )
+
+
+def test_classification_with_decisions_marks_wrong_predictions_and_gives_accuracy():
+    result = Classification(
+        GOLF_CLASSES,
+        (
+            {"Play": 0.4, "Don't Play": 0.6},
+            {"Play": 1.0, "Don't Play": 0.0},
+            {"Play": 0.5, "Don't Play": 0.5},
+        ),
+        decisions=("Play", "Play", "Play"),
+    )
+
+    assert render_classification_plain(result) == (
+        "case  predicted    Play  Don't Play  actual\n"
+        "   1  Don't Play  0.400       0.600  Play    wrong\n"
+        "   2  Play        1.000       0.000  Play\n"
+        "   3  Play        0.500       0.500  Play\n"
+        "\n"
+        "Accuracy: 2 of 3 cases (66.7%)"
+    )

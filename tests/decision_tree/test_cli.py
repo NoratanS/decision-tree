@@ -353,16 +353,14 @@ def test_test_set_with_another_column_count_gives_one_line_error(write_table):
     assert "3 columns, expected 4" in result.stderr
 
 
-# Interim: ticket 08 classifies an unseen value as if it were missing (R7).
-def test_test_case_the_tree_cannot_classify_gives_one_line_error(write_table):
+def test_test_case_with_an_unseen_value_is_classified_as_missing(write_table):
+    # foggy: old 3/10 down, mid 4/10 and new 3/10 up, so up is right.
     test = str(write_table("old yes swr up\nfoggy no hwr up\n", name="test.txt"))
 
     result = runner.invoke(app, ["train", GIELDA, "--test", test])
 
-    assert result.exit_code == 1
-    assert result.stderr.strip().count("\n") == 0
-    assert "case 2" in result.stderr
-    assert "a1 = foggy" in result.stderr
+    assert result.exit_code == 0
+    assert "2 cases, 1 error (50.0%)" in result.stdout
 
 
 def test_test_case_with_text_in_a_continuous_column_gives_a_clear_error(write_table):
@@ -420,3 +418,95 @@ def test_missing_decision_gives_one_line_error_naming_the_line(write_table):
     assert result.exit_code == 1
     assert result.stderr.strip().count("\n") == 0
     assert "line 2: the decision is missing" in result.stderr
+
+
+GOLF_CASES = """\
+outlook,temperature,humidity,windy
+sunny,85,70,false
+rain,70,?,true
+foggy,72,90,true
+"""
+# foggy is classified as if outlook were missing: overcast 4/14 Play, sunny
+# and rain 10/14 Don't Play.
+GOLF_CLASSIFIED = """\
+case  predicted    Play  Don't Play
+   1  Play        1.000       0.000
+   2  Don't Play  0.000       1.000
+   3  Don't Play  0.286       0.714
+"""
+
+
+def test_classify_cases_without_decisions_prints_class_and_distribution(write_table):
+    cases = str(write_table(GOLF_CASES, name="cases.txt"))
+
+    result = runner.invoke(app, ["classify", *GOLF_ARGS, cases])
+
+    assert result.exit_code == 0
+    assert result.stdout == GOLF_CLASSIFIED
+
+
+def test_classify_cases_with_decisions_marks_errors_and_reports_accuracy(write_table):
+    cases = str(write_table("old yes swr down\nnew no swr down\n", name="cases.txt"))
+
+    result = runner.invoke(app, ["classify", GIELDA, cases])
+
+    assert result.exit_code == 0
+    assert result.stdout == (
+        "case  predicted   down     up  actual\n"
+        "   1  down       1.000  0.000  down\n"
+        "   2  up         0.000  1.000  down    wrong\n"
+        "\n"
+        "Accuracy: 1 of 2 cases (50.0%)\n"
+    )
+
+
+@pytest.mark.parametrize("text", ["old yes\n", "old yes swr down x\n"])
+def test_classify_cases_with_another_column_count_give_one_line_error(
+    write_table, text
+):
+    cases = str(write_table(text, name="cases.txt"))
+
+    result = runner.invoke(app, ["classify", GIELDA, cases])
+
+    assert result.exit_code == 1
+    assert result.stderr.strip().count("\n") == 0
+    assert "expected 3 (without a decision) or 4" in result.stderr
+
+
+def test_classify_plain_flag_forces_plain_text_in_a_terminal(write_table):
+    cases = str(write_table(GOLF_CASES, name="cases.txt"))
+
+    result = runner.invoke(
+        app,
+        ["classify", *GOLF_ARGS, cases, "--plain"],
+        env={"TTY_COMPATIBLE": "1"},
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout == GOLF_CLASSIFIED
+
+
+def test_classify_draws_a_rich_table_in_a_terminal(write_table):
+    cases = str(write_table("old yes swr down\nnew no swr down\n", name="cases.txt"))
+
+    result = runner.invoke(
+        app, ["classify", GIELDA, cases], env={"TTY_COMPATIBLE": "1"}
+    )
+
+    assert result.exit_code == 0
+    assert "┃" in result.stdout
+    assert result.stdout.count("wrong") == 1
+    assert "Accuracy: 1 of 2 cases (50.0%)" in result.stdout
+
+
+def test_classify_takes_the_build_options(write_table):
+    # With gain, gielda's root is still a1, but -m 5 leaves the tree one Leaf:
+    # every case gets down 0.5 / up 0.5, predicted down (first in file order).
+    cases = str(write_table("new no hwr\n", name="cases.txt"))
+
+    result = runner.invoke(
+        app, ["classify", GIELDA, cases, "--criterion", "gain", "-m", "5"]
+    )
+
+    assert result.exit_code == 0
+    assert "   1  down       0.500  0.500" in result.stdout

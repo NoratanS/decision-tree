@@ -60,20 +60,19 @@ def classify(tree: Tree, case: Sequence[str | None]) -> ClassDistribution:
     """Class Distribution for a Case, as probabilities summing to 1 (spec R7).
 
     `case` holds the Conditional Attribute values in column order; None is a
-    Missing Value. At a Node testing a Missing Value the Case goes down every
-    branch, and the branches' distributions are combined, each weighted by the
-    branch's share of the training weight.
+    Missing Value. A discrete value never seen in training counts as missing.
+    At a Node testing a Missing Value the Case goes down every branch, and the
+    branches' distributions are combined, each weighted by the branch's share
+    of the training weight.
     """
     while isinstance(tree, Node):
         value = case[tree.index]
-        if value is None:
-            return _combine_branches(tree, case)
-        if tree.threshold is not None:
+        if tree.threshold is not None and value is not None:
             tree = tree.branches[threshold_branch(float(value), tree.threshold)]
-            continue
-        if value not in tree.branches:
-            raise ValueError(f"no branch for {tree.attribute} = {value}")
-        tree = tree.branches[value]
+        elif value in tree.branches:
+            tree = tree.branches[value]
+        else:
+            return _combine_branches(tree, case)
     total = tree.total
     if total <= 0:
         return {c: float(c == tree.decision) for c in tree.distribution}

@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from decision_tree.table import TableError, load_table
+from decision_tree.table import TableError, load_cases, load_table
 
 DATA = Path(__file__).parent.parent / "data"
 
@@ -49,7 +49,7 @@ def test_empty_file_is_a_table_error(write_table):
 def test_single_column_is_a_table_error(write_table):
     path = write_table("yes\nno\n")
 
-    with pytest.raises(TableError, match="at least two columns"):
+    with pytest.raises(TableError, match="at least 2 columns"):
         load_table(path)
 
 
@@ -344,6 +344,76 @@ def test_like_checks_continuous_values_and_names_the_line(write_table):
         TableError, match="line 2: a3 is continuous but 'high' is not a number"
     ):
         load_table(path, like=golf_training())
+
+
+def test_cases_without_a_decision_column_have_no_decisions(write_table):
+    path = write_table("sunny 85 ? false\nfoggy 70 96 true\n")
+
+    cases = load_cases(path, like=golf_training())
+
+    assert cases.cases == (
+        ("sunny", "85", None, "false"),
+        ("foggy", "70", "96", "true"),
+    )
+    assert cases.decisions is None
+
+
+def test_cases_with_a_decision_column_keep_their_decisions(write_table):
+    path = write_table("sunny 85 85 false Play\nrain 70 96 false Don't\n")
+
+    cases = load_cases(path, like=golf_training())
+
+    assert cases.cases == (
+        ("sunny", "85", "85", "false"),
+        ("rain", "70", "96", "false"),
+    )
+    assert cases.decisions == ("Play", "Don't")
+
+
+def test_cases_take_a_header_and_loading_options(write_table):
+    path = write_table("o;t;h;w\nsłońce;85;-;false\n", encoding="cp1250")
+
+    cases = load_cases(
+        path,
+        like=golf_training(),
+        header=True,
+        sep=";",
+        encoding="cp1250",
+        missing=["-"],
+    )
+
+    assert cases.cases == (("słońce", "85", None, "false"),)
+
+
+def test_cases_of_a_one_attribute_table_may_have_one_column(write_table):
+    training = load_table(write_table("old up\nnew down\n", name="training.txt"))
+
+    cases = load_cases(write_table("old\nmid\n"), like=training)
+
+    assert cases.cases == (("old",), ("mid",))
+    assert cases.decisions is None
+
+
+@pytest.mark.parametrize("text", ["sunny 85 Play\n", "sunny 85 85 false Play x\n"])
+def test_cases_with_another_column_count_are_an_error(write_table, text):
+    with pytest.raises(TableError, match="expected 4 .without a decision. or 5"):
+        load_cases(write_table(text), like=golf_training())
+
+
+def test_cases_check_continuous_values_and_name_the_line(write_table):
+    path = write_table("sunny 1 2 false\nsunny 1 high false\n")
+
+    with pytest.raises(
+        TableError, match="line 2: humidity is continuous but 'high' is not a number"
+    ):
+        load_cases(path, like=golf_training())
+
+
+def test_cases_with_a_missing_decision_name_the_line(write_table):
+    path = write_table("sunny 1 2 false Play\nsunny 1 2 false ?\n")
+
+    with pytest.raises(TableError, match="line 2: the decision is missing"):
+        load_cases(path, like=golf_training())
 
 
 def test_default_missing_markers_are_question_mark_na_and_empty_cell(write_table):

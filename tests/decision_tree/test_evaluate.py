@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from decision_tree.evaluate import evaluate, hold_out
-from decision_tree.table import DecisionTable, load_table
+from decision_tree.evaluate import classify_cases, evaluate, hold_out
+from decision_tree.table import Cases, DecisionTable, load_table
 from decision_tree.tree import Leaf, Node
 
 DATA = Path(__file__).parent.parent / "data"
@@ -106,3 +106,29 @@ def test_hold_out_keeps_names_and_types():
 def test_hold_out_with_an_empty_part_is_an_error(ratio):
     with pytest.raises(ValueError, match="14 cases"):
         hold_out(golf(), ratio, seed=42)
+
+
+def test_classify_cases_predicts_the_most_probable_class_and_counts_correct_ones():
+    tree = Node(
+        "a1",
+        0,
+        {
+            "x": Leaf("yes", {"yes": 2.0, "no": 0.0}),
+            "y": Leaf("no", {"yes": 1.0, "no": 1.0}),
+        },
+        {"yes": 3.0, "no": 1.0},
+    )
+
+    # y is a tie: yes comes first in file order.
+    result = classify_cases(tree, Cases((("x",), ("y",)), decisions=("no", "yes")))
+
+    assert result.classes == ("yes", "no")
+    assert result.distributions == ({"yes": 1.0, "no": 0.0}, {"yes": 0.5, "no": 0.5})
+    assert result.predicted == ("yes", "yes")
+    assert result.correct == 1
+
+
+def test_classify_cases_without_decisions_has_none_correct():
+    result = classify_cases(TREE, Cases((("x",),), decisions=None))
+
+    assert (result.predicted, result.decisions, result.correct) == (("yes",), None, 0)
