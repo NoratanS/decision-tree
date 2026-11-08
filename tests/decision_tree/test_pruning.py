@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from decision_tree import ReadOptions, build_tree, evaluate, load_table
+from decision_tree import BuildOptions, ReadOptions, build_tree, evaluate, load_table
 from decision_tree.pruning import estimated_errors, prune
 from decision_tree.render import render_plain
 from decision_tree.tree import Leaf, Node, size
@@ -76,7 +76,7 @@ def load_golf():
 
 
 def course_mode_test_table():
-    return build_tree(load_table(DATA / "test_table.txt"), min_cases=1)
+    return build_tree(load_table(DATA / "test_table.txt"), BuildOptions(min_cases=1))
 
 
 def test_golf_keeps_8_nodes_and_0_errors_after_pruning():

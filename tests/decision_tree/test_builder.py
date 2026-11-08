@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from decision_tree.builder import build_tree
+from decision_tree.builder import BuildOptions, build_tree
 from decision_tree.render import render_plain
 from decision_tree.table import ReadOptions, load_table
 from decision_tree.tree import Leaf, Node, classify
@@ -40,7 +40,7 @@ TEST_TABLE_M2_TREE = (DATA / "test_table-m2.tree.txt").read_text().rstrip("\n")
 
 
 def tree_from(write_table, text, **options):
-    return build_tree(load_table(write_table(text)), **options)
+    return build_tree(load_table(write_table(text)), BuildOptions(**options))
 
 
 def test_stock_market_tree_matches_reference_page():
@@ -136,7 +136,7 @@ def test_empty_branch_gets_parents_most_common_class(write_table):
 
 
 def test_min_cases_1_gives_the_course_mode_tree():
-    tree = build_tree(load_table(TEST_TABLE), min_cases=1)
+    tree = build_tree(load_table(TEST_TABLE), BuildOptions(min_cases=1))
 
     assert render_plain(tree) == TEST_TABLE_M1_TREE
 
@@ -159,7 +159,7 @@ def test_min_cases_counts_cases_per_branch(write_table):
 
 def test_gain_criterion_picks_the_highest_gain():
     # docs/assignment.md: a1 has the highest Gain (0.78) on test_table.
-    tree = build_tree(load_table(TEST_TABLE), criterion="gain")
+    tree = build_tree(load_table(TEST_TABLE), BuildOptions(criterion="gain"))
 
     assert isinstance(tree, Node)
     assert tree.attribute == "a1"
@@ -168,7 +168,7 @@ def test_gain_criterion_picks_the_highest_gain():
 def test_quinlan_gain_filter_drops_tests_below_average_gain():
     # docs/assignment.md, test_table: Gains 0.78, 0.56, 0.56, 0.41 average
     # 0.58, so only a1 competes on Gain Ratio, though a3 has the best ratio.
-    tree = build_tree(load_table(TEST_TABLE), quinlan_gain_filter=True)
+    tree = build_tree(load_table(TEST_TABLE), BuildOptions(quinlan_gain_filter=True))
 
     assert isinstance(tree, Node)
     assert tree.attribute == "a1"
@@ -228,9 +228,25 @@ def test_mirror_image_tests_tie_and_the_leftmost_wins(write_table):
     )
 
 
+def test_build_options_default_to_c45():
+    options = BuildOptions()
+
+    assert (options.criterion, options.quinlan_gain_filter, options.min_cases) == (
+        "gain-ratio",
+        False,
+        2,
+    )
+
+
 def test_unknown_criterion_is_rejected():
     with pytest.raises(ValueError, match="criterion"):
-        build_tree(load_table(TEST_TABLE), criterion="entropy")
+        BuildOptions(criterion="entropy")  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("min_cases", [0, -1])
+def test_min_cases_below_one_case_is_rejected(min_cases):
+    with pytest.raises(ValueError, match="min_cases"):
+        BuildOptions(min_cases=min_cases)
 
 
 # Quinlan, "C4.5: Programs for Machine Learning", §2.4: the golf tree when the

@@ -11,6 +11,7 @@ CLI_ONLY = {"typer", "rich"}
 
 def test_public_api_is_exported():
     from decision_tree import (
+        BuildOptions,
         ReadOptions,
         build_tree,
         classify,
@@ -22,6 +23,7 @@ def test_public_api_is_exported():
     )
 
     exported = (
+        BuildOptions,
         ReadOptions,
         load_table,
         load_cases,

@@ -8,7 +8,7 @@ result.
 import random
 from dataclasses import dataclass
 
-from decision_tree.builder import Criterion, build_tree
+from decision_tree.builder import DEFAULT_BUILD_OPTIONS, BuildOptions, build_tree
 from decision_tree.evaluate import Evaluation, evaluate
 from decision_tree.pruning import DEFAULT_CONFIDENCE, prune
 from decision_tree.table import DecisionTable
@@ -91,14 +91,13 @@ class ExperimentResult:
 def run_experiment(
     training: DecisionTable,
     test: TestSource = None,
+    options: BuildOptions = DEFAULT_BUILD_OPTIONS,
     *,
-    criterion: Criterion = "gain-ratio",
-    quinlan_gain_filter: bool = False,
-    min_cases: float = 2,
     confidence: float | None = DEFAULT_CONFIDENCE,
 ) -> ExperimentResult:
-    """Build a tree from `training`, prune it at `confidence` (a fraction in
-    (0, 1], or None for no pruning) and evaluate each tree on each set.
+    """Build a tree from `training` with `options`, prune it at `confidence` (a
+    fraction in (0, 1], or None for no pruning) and evaluate each tree on each
+    set.
 
     With a `HoldOut`, the tree is built from the training part of the split and
     evaluated on that part and the held-out one. Raises SplitError if the split
@@ -115,12 +114,7 @@ def run_experiment(
             tests.append((HoldOutTestSet(seed), held_out))
     sets = [(TrainingSet(), training), *tests]
 
-    unpruned = build_tree(
-        training,
-        criterion=criterion,
-        quinlan_gain_filter=quinlan_gain_filter,
-        min_cases=min_cases,
-    )
+    unpruned = build_tree(training, options)
     pruned = None if confidence is None else prune(unpruned, confidence)
     evaluations = tuple(
         SetEvaluation(

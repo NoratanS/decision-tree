@@ -13,7 +13,7 @@ from rich.markup import escape
 from rich.table import Table
 from rich.tree import Tree as RichTree
 
-from decision_tree.builder import Criterion, build_tree
+from decision_tree.builder import BuildOptions, Criterion, build_tree
 from decision_tree.evaluate import Classification, Evaluation, classify_cases
 from decision_tree.experiment import (
     FileSource,
@@ -222,9 +222,11 @@ def train(
         result = run_experiment(
             training,
             source,
-            criterion=criterion,
-            quinlan_gain_filter=quinlan_gain_filter,
-            min_cases=min_cases,
+            BuildOptions(
+                criterion=criterion,
+                quinlan_gain_filter=quinlan_gain_filter,
+                min_cases=min_cases,
+            ),
             confidence=None if no_prune else confidence / 100,
         )
     except SplitError as error:
@@ -270,9 +272,11 @@ def classify(
         to_classify = load_cases(cases, options, like=training)
     tree = build_tree(
         training,
-        criterion=criterion,
-        quinlan_gain_filter=quinlan_gain_filter,
-        min_cases=min_cases,
+        BuildOptions(
+            criterion=criterion,
+            quinlan_gain_filter=quinlan_gain_filter,
+            min_cases=min_cases,
+        ),
     )
     result = classify_cases(tree, to_classify)
     if plain or not out.is_terminal:

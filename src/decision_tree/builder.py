@@ -52,34 +52,47 @@ def _known_counts(partition: Partition) -> list[float]:
     return [sum(column) for column in zip(*partition, strict=True)]
 
 
-def build_tree(
-    table: DecisionTable,
-    *,
-    criterion: Criterion = "gain-ratio",
-    quinlan_gain_filter: bool = False,
-    min_cases: float = 2,
-) -> Tree:
-    """Grow an unpruned C4.5 tree from a Training Set.
+@dataclass(frozen=True)
+class BuildOptions:
+    """How a tree is grown; pruning is a separate stage (spec R5, R10).
 
     A test is a candidate when at least two of its branches hold `min_cases`
     or more cases (`-m`, spec R5.1). Among candidates with positive Gain the
     best `criterion` wins. With `quinlan_gain_filter`, a test must also have
     at least the average Gain of all candidates (spec R4.4).
+
+    Raises ValueError for an unknown `criterion` or a `min_cases` of 0 or less.
     """
-    if criterion not in _SCORES:
-        raise ValueError(f"unknown criterion {criterion!r}")
+
+    criterion: Criterion = "gain-ratio"
+    quinlan_gain_filter: bool = False
+    min_cases: float = 2
+
+    def __post_init__(self) -> None:
+        if self.criterion not in _SCORES:
+            raise ValueError(f"unknown criterion {self.criterion!r}")
+        if self.min_cases <= 0:
+            raise ValueError(f"min_cases must be above 0, got {self.min_cases!r}")
+
+
+DEFAULT_BUILD_OPTIONS = BuildOptions()
+"""C4.5's defaults: Gain Ratio, no Quinlan filter, `-m 2`."""
+
+
+def build_tree(
+    table: DecisionTable, options: BuildOptions = DEFAULT_BUILD_OPTIONS
+) -> Tree:
+    """Grow an unpruned C4.5 tree from a Training Set, as `options` say."""
     cases = [(i, 1.0) for i in range(len(table.cases))]
     available = frozenset(range(len(table.attributes)))
-    builder = _Builder(table, criterion, quinlan_gain_filter, min_cases)
+    builder = _Builder(table, options)
     return builder.grow(cases, available, table.classes[0])
 
 
 @dataclass(frozen=True)
 class _Builder:
     table: DecisionTable
-    criterion: Criterion
-    quinlan_gain_filter: bool
-    min_cases: float
+    options: BuildOptions
 
     def grow(
         self, cases: WeightedCases, available: frozenset[int], parent_majority: str
@@ -166,15 +179,16 @@ class _Builder:
             return None
 
         min_gain = EPSILON
-        if self.quinlan_gain_filter:
+        if self.options.quinlan_gain_filter:
             average = sum(c.gain for c in candidates) / len(candidates)
             min_gain = max(min_gain, average - EPSILON)
 
+        score_of = _SCORES[self.options.criterion]
         best, best_score = None, 0.0
         for candidate in candidates:
             if candidate.gain <= min_gain:
                 continue
-            score = _SCORES[self.criterion](candidate)
+            score = score_of(candidate)
             # A later column must win by more than rounding noise.
             if best is None or score > best_score + EPSILON:
                 best, best_score = candidate, score
@@ -219,7 +233,7 @@ class _Builder:
             known,
             len(class_index),
             self._training_values[attribute],
-            min_cases=self.min_cases,
+            min_cases=self.options.min_cases,
         )
         if found is None:
             return None
@@ -238,7 +252,8 @@ class _Builder:
 
     def _enough_cases(self, partition: Partition) -> bool:
         """At least two branches hold `min_cases` or more cases."""
-        return sum(1 for branch in partition if sum(branch) >= self.min_cases) >= 2
+        min_cases = self.options.min_cases
+        return sum(1 for branch in partition if sum(branch) >= min_cases) >= 2
 
     @cached_property
     def _values(self) -> dict[int, tuple[str, ...]]:

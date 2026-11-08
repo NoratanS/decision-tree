@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from decision_tree.builder import BuildOptions
 from decision_tree.experiment import (
     FileSource,
     FileTestSet,
@@ -105,7 +106,9 @@ def test_confidence_level_sets_how_much_is_pruned():
 
 
 def test_build_options_reach_the_tree():
-    result = run_experiment(stock_market(), criterion="gain", min_cases=5)
+    result = run_experiment(
+        stock_market(), options=BuildOptions(criterion="gain", min_cases=5)
+    )
 
     assert size(result.unpruned) == 1
 
