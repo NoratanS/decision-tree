@@ -26,7 +26,7 @@ from decision_tree.render import (
     render_stats_plain,
 )
 from decision_tree.stats import TableStats, table_stats
-from decision_tree.table import DecisionTable, TableError, load_table
+from decision_tree.table import MISSING_MARKERS, DecisionTable, TableError, load_table
 from decision_tree.tree import Leaf, Node, Tree
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
@@ -71,6 +71,16 @@ Continuous = Annotated[
     ),
 ]
 
+_DEFAULT_MISSING = ",".join(MISSING_MARKERS)
+Missing = Annotated[
+    str,
+    typer.Option(
+        "--missing",
+        help="Comma-separated Missing Value markers; an empty item is the empty cell.",
+        rich_help_panel=_LOADING,
+    ),
+]
+
 
 _SPLITTING = "Split options"
 _EVALUATION = "Evaluation options"
@@ -92,6 +102,7 @@ def train(
     encoding: Encoding = "utf-8",
     discrete: Discrete = "",
     continuous: Continuous = "",
+    missing: Missing = _DEFAULT_MISSING,
     criterion: Annotated[
         Criterion,
         typer.Option(
@@ -158,10 +169,18 @@ def train(
         encoding=encoding,
         discrete=discrete,
         continuous=continuous,
+        missing=missing,
     )
     tests: list[tuple[str, DecisionTable]] = []
     if test is not None:
-        test_set = _load(test, header=header, sep=sep, encoding=encoding, like=training)
+        test_set = _load(
+            test,
+            header=header,
+            sep=sep,
+            encoding=encoding,
+            missing=missing,
+            like=training,
+        )
         tests.append((f"Test Set ({test})", test_set))
     elif split is not None:
         if seed is None:
@@ -205,6 +224,7 @@ def stats(
     encoding: Encoding = "utf-8",
     discrete: Discrete = "",
     continuous: Continuous = "",
+    missing: Missing = _DEFAULT_MISSING,
 ) -> None:
     """Show each attribute's type, value counts and missing values."""
     out = Console()
@@ -216,6 +236,7 @@ def stats(
             encoding=encoding,
             discrete=discrete,
             continuous=continuous,
+            missing=missing,
         )
     )
     if plain or not out.is_terminal:
@@ -232,6 +253,7 @@ def _load(
     encoding: str,
     discrete: str = "",
     continuous: str = "",
+    missing: str = _DEFAULT_MISSING,
     like: DecisionTable | None = None,
 ) -> DecisionTable:
     try:
@@ -242,6 +264,7 @@ def _load(
             encoding=encoding,
             discrete=_column_list(discrete),
             continuous=_column_list(continuous),
+            missing=_marker_list(missing),
             like=like,
         )
     except TableError as error:
@@ -258,6 +281,11 @@ def _evaluate(tree: Tree, set_name: str, table: DecisionTable) -> Evaluation:
 def _column_list(columns: str) -> list[str]:
     """`"a1, a3"` → `["a1", "a3"]`."""
     return [name.strip() for name in columns.split(",") if name.strip()]
+
+
+def _marker_list(markers: str) -> list[str]:
+    """`"?, NA,"` → `["?", "NA", ""]`: empty items keep the empty cell."""
+    return [marker.strip() for marker in markers.split(",")]
 
 
 def _print_plain(out: Console, text: str) -> None:

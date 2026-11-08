@@ -50,3 +50,12 @@ def test_attribute_kind_is_the_inferred_type(write_table):
         "continuous",
         "discrete",
     ]
+
+
+def test_missing_values_are_counted_per_attribute_and_not_as_values(write_table):
+    path = write_table("old ? up\n? NA down\nNA yes up\n")
+
+    stats = table_stats(load_table(path))
+
+    assert [a.missing for a in stats.attributes] == [2, 2]
+    assert [dict(a.counts) for a in stats.attributes] == [{"old": 1}, {"yes": 1}]

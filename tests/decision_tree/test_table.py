@@ -344,3 +344,48 @@ def test_like_checks_continuous_values_and_names_the_line(write_table):
         TableError, match="line 2: a3 is continuous but 'high' is not a number"
     ):
         load_table(path, like=golf_training())
+
+
+def test_default_missing_markers_are_question_mark_na_and_empty_cell(write_table):
+    path = write_table("?,x,yes\nNA,,no\nold,y,no\n")
+
+    table = load_table(path)
+
+    assert table.cases == ((None, "x"), (None, None), ("old", "y"))
+
+
+def test_missing_markers_are_configurable(write_table):
+    path = write_table("-,?,yes\nold,,no\n")
+
+    table = load_table(path, missing=["-"])
+
+    assert table.cases == ((None, "?"), ("old", ""))
+
+
+def test_missing_decision_names_the_line(write_table):
+    path = write_table("old yes up\n\nnew no ?\n")
+
+    with pytest.raises(TableError, match="line 3: the decision is missing"):
+        load_table(path)
+
+
+def test_type_inference_ignores_missing_values(write_table):
+    path = write_table("? 1 yes\n3.5 ? no\n2 NA no\n")
+
+    table = load_table(path)
+
+    assert table.kinds == ("continuous", "discrete")
+
+
+def test_missing_values_pass_the_continuous_check(write_table):
+    path = write_table("1 yes\n? no\n")
+
+    table = load_table(path, continuous=["a1"])
+
+    assert table.cases == (("1",), (None,))
+
+
+def test_known_values_skip_missing_ones(write_table):
+    path = write_table("? yes\nold no\n? no\nnew yes\n")
+
+    assert load_table(path).values(0) == ("old", "new")

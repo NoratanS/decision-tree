@@ -14,6 +14,11 @@ from functools import cached_property
 from typing import Literal
 
 type Kind = Literal["discrete", "continuous"]
+type Value = str | None
+"""A Conditional Attribute value of a Case; None is a Missing Value."""
+
+MISSING_MARKERS = ("?", "NA", "")
+"""Cells read as a Missing Value by default; `""` is the empty cell."""
 
 _WHITESPACE = None
 """Separator meaning "runs of spaces and tabs"."""
@@ -35,8 +40,8 @@ class DecisionTable:
     """Names of the Conditional Attributes, in column order."""
     decision: str
     """Name of the Decision Attribute."""
-    cases: tuple[tuple[str, ...], ...]
-    """Conditional Attribute values of each Case."""
+    cases: tuple[tuple[Value, ...], ...]
+    """Conditional Attribute values of each Case; None is a Missing Value."""
     decisions: tuple[str, ...]
     """Decision Class of each Case, parallel to `cases`."""
     kinds: tuple[Kind, ...]
@@ -48,8 +53,12 @@ class DecisionTable:
         return tuple(dict.fromkeys(self.decisions))
 
     def values(self, attribute: int) -> tuple[str, ...]:
-        """Values of one Conditional Attribute, in order of first appearance."""
-        return tuple(dict.fromkeys(case[attribute] for case in self.cases))
+        """Known values of one Conditional Attribute, in order of first appearance."""
+        return tuple(
+            dict.fromkeys(
+                value for case in self.cases if (value := case[attribute]) is not None
+            )
+        )
 
     def subset(self, indices: Sequence[int]) -> DecisionTable:
         """The Cases at `indices`, in that order, with the same names and types."""
@@ -68,6 +77,7 @@ def load_table(
     encoding: str = "utf-8",
     discrete: Iterable[str] = (),
     continuous: Iterable[str] = (),
+    missing: Iterable[str] = MISSING_MARKERS,
     like: DecisionTable | None = None,
 ) -> DecisionTable:
     """Read a Decision Table.
@@ -78,6 +88,10 @@ def load_table(
 
     Attribute types are inferred (ADR 0001); `discrete` and `continuous` name
     columns whose type is forced instead.
+
+    A cell equal to one of the `missing` markers (after trimming) is a Missing
+    Value, stored as None; `""` stands for the empty cell. Quoting does not
+    change this: `"?"` is missing too. A missing decision is an error.
 
     With `like` (e.g. the Training Set, when reading a Test Set) the file must
     have that table's column count and takes its attribute types; `discrete`
@@ -120,7 +134,16 @@ def load_table(
     else:
         names = [*(f"a{i}" for i in range(1, len(rows[0]))), "d"]
 
-    cases = tuple(tuple(row[:-1]) for row in rows)
+    markers = frozenset(missing)
+    for number, row in zip(numbers, rows, strict=True):
+        if row[-1] in markers:
+            raise TableError(
+                f"{name}, line {number}: the decision is missing "
+                f"({row[-1]!r} is a Missing Value marker)"
+            )
+    cases = tuple(
+        tuple(None if value in markers else value for value in row[:-1]) for row in rows
+    )
     if like is None:
         kinds = [_infer_kind(column) for column in zip(*cases, strict=True)]
         forced = _overrides(names, discrete, continuous)
@@ -169,19 +192,21 @@ def _overrides(
 
 
 def _check_numeric(
-    name: str, column: str, numbers: Iterable[int], values: Iterable[str]
+    name: str, column: str, numbers: Iterable[int], values: Iterable[Value]
 ) -> None:
     for number, value in zip(numbers, values, strict=True):
-        if not _NUMBER.fullmatch(value):
+        if value is not None and not _NUMBER.fullmatch(value):
             raise TableError(
                 f"{name}, line {number}: {column} is continuous but {value!r} "
                 "is not a number"
             )
 
 
-def _infer_kind(values: tuple[str, ...]) -> Kind:
-    """Continuous only if every value is a number and one has a fraction (ADR 0001)."""
-    if all(_NUMBER.fullmatch(v) for v in values) and any(map(_fractional, values)):
+def _infer_kind(values: tuple[Value, ...]) -> Kind:
+    """Continuous only if every known value is a number and one has a fraction
+    (ADR 0001)."""
+    known = [v for v in values if v is not None]
+    if all(_NUMBER.fullmatch(v) for v in known) and any(map(_fractional, known)):
         return "continuous"
     return "discrete"
 

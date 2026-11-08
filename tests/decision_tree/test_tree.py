@@ -63,3 +63,35 @@ def test_threshold_node_sends_values_up_to_the_threshold_left(humidity, expected
     distribution = classify(humidity_node(), ("sunny", "72", humidity, "false"))
 
     assert distribution[expected] == 1.0
+
+
+def test_golf_sunny_case_with_missing_humidity_matches_reference_page():
+    # Reference page: under sunny, 2 of 5 cases have humidity <= 75 (Play), so
+    # the case is Play with 0.4 and Don't Play with 0.6.
+    table = load_table(
+        DATA / "golf.txt", header=True, continuous=["temperature", "humidity"]
+    )
+    tree = build_tree(table)
+
+    distribution = classify(tree, ("sunny", "72", None, "false"))
+
+    assert distribution == {
+        "Play": pytest.approx(0.4),
+        "Don't Play": pytest.approx(0.6),
+    }
+
+
+def test_missing_value_combines_every_branch_weighted_by_its_size():
+    tree = Node(
+        "a1",
+        0,
+        {
+            "x": Leaf("yes", {"yes": 3.0, "no": 1.0}),
+            "y": Leaf("no", {"yes": 0.0, "no": 4.0}),
+            "z": Leaf("yes", {"yes": 0.0, "no": 0.0}),
+        },
+        {"yes": 3.0, "no": 5.0},
+    )
+
+    # x: 4/8 * (0.75, 0.25), y: 4/8 * (0, 1), z: empty, no weight.
+    assert classify(tree, (None,)) == {"yes": 0.375, "no": 0.625}

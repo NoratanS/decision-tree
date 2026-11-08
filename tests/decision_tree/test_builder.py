@@ -245,3 +245,27 @@ def test_mirror_image_tests_tie_and_the_leftmost_wins(write_table):
 def test_unknown_criterion_is_rejected():
     with pytest.raises(ValueError, match="criterion"):
         build_tree(load_table(TESTOWA), criterion="entropy")
+
+
+# Quinlan, "C4.5: Programs for Machine Learning", §2.4: the golf tree when the
+# outlook of the case (overcast, 72, 90, true, Play) is unknown. That case goes
+# down every outlook branch with weight 5/13, 3/13 and 5/13.
+GOLF_MISSING_TREE = """\
+outlook = overcast: Play (3.2)
+outlook = sunny:
+|   humidity <= 75 : Play (2.0)
+|   humidity > 75 : Don't Play (3.4/0.4)
+outlook = rain:
+|   windy = true: Don't Play (2.4/0.4)
+|   windy = false: Play (3.0)"""
+
+
+def test_golf_with_a_missing_outlook_matches_quinlan(write_table):
+    text = GOLF.read_text().replace("overcast, 72, 90", "?, 72, 90")
+    table = load_table(
+        write_table(text), header=True, continuous=["temperature", "humidity"]
+    )
+
+    tree = build_tree(table)
+
+    assert render_plain(tree) == GOLF_MISSING_TREE

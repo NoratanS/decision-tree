@@ -36,6 +36,11 @@ class Node:
     threshold: float | None = None
     """The Threshold of a test on a Continuous Attribute; None for a discrete test."""
 
+    @property
+    def total(self) -> float:
+        """Training weight that reached this Node."""
+        return sum(self.distribution.values())
+
 
 type Tree = Node | Leaf
 
@@ -51,13 +56,18 @@ def majority(distribution: ClassDistribution) -> str:
     return max(distribution, key=distribution.__getitem__)
 
 
-def classify(tree: Tree, case: Sequence[str]) -> ClassDistribution:
+def classify(tree: Tree, case: Sequence[str | None]) -> ClassDistribution:
     """Class Distribution for a Case, as probabilities summing to 1 (spec R7).
 
-    `case` holds the Conditional Attribute values in column order.
+    `case` holds the Conditional Attribute values in column order; None is a
+    Missing Value. At a Node testing a Missing Value the Case goes down every
+    branch, and the branches' distributions are combined, each weighted by the
+    branch's share of the training weight.
     """
     while isinstance(tree, Node):
         value = case[tree.index]
+        if value is None:
+            return _combine_branches(tree, case)
         if tree.threshold is not None:
             tree = tree.branches[threshold_branch(float(value), tree.threshold)]
             continue
@@ -68,3 +78,15 @@ def classify(tree: Tree, case: Sequence[str]) -> ClassDistribution:
     if total <= 0:
         return {c: float(c == tree.decision) for c in tree.distribution}
     return {c: w / total for c, w in tree.distribution.items()}
+
+
+def _combine_branches(node: Node, case: Sequence[str | None]) -> ClassDistribution:
+    """Classify `case` down every branch of `node`; sum the distributions, each
+    weighted by its branch's share of the training weight."""
+    total = sum(child.total for child in node.branches.values())
+    combined = dict.fromkeys(node.distribution, 0.0)
+    for child in node.branches.values():
+        if share := child.total / total:
+            for decision, probability in classify(child, case).items():
+                combined[decision] += share * probability
+    return combined

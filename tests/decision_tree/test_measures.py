@@ -84,3 +84,25 @@ def test_gain_ratio_on_gielda(partition, expected):
 
 def test_gain_ratio_is_zero_when_all_cases_fall_in_one_branch():
     assert gain_ratio((2, 3), ((2, 3), (0, 0))) == 0.0
+
+
+# Quinlan, "C4.5: Programs for Machine Learning", §2.4: golf with one overcast
+# case's outlook missing. Class counts (Play, Don't Play) of the 13 known cases.
+GOLF_KNOWN = (8, 5)
+GOLF_OUTLOOK_KNOWN = ((2, 3), (3, 0), (3, 2))  # sunny, overcast, rain
+
+
+def test_gain_with_missing_values_is_scaled_by_the_known_fraction():
+    assert gain(GOLF_KNOWN, GOLF_OUTLOOK_KNOWN, missing=1) == pytest.approx(
+        0.199, abs=5e-4
+    )
+
+
+def test_split_info_counts_missing_values_as_an_extra_branch():
+    assert split_info(GOLF_OUTLOOK_KNOWN, missing=1) == pytest.approx(1.809, abs=5e-4)
+
+
+def test_gain_ratio_with_missing_values():
+    assert gain_ratio(GOLF_KNOWN, GOLF_OUTLOOK_KNOWN, missing=1) == pytest.approx(
+        0.110, abs=5e-4
+    )

@@ -12,9 +12,9 @@ class AttributeStats:
     kind: Kind
     """Discrete or Continuous Attribute, as the loader inferred or was told."""
     counts: dict[str, int]
-    """Occurrences of each value, in order of first appearance in the file."""
+    """Occurrences of each known value, in order of first appearance in the file."""
     missing: int
-    """Missing Values; always 0 until the loader recognises missing markers."""
+    """Number of Missing Values."""
 
     @property
     def distinct(self) -> int:
@@ -33,16 +33,20 @@ class TableStats:
 
 def table_stats(table: DecisionTable) -> TableStats:
     """Value counts of every Conditional Attribute and case counts per class."""
-    return TableStats(
-        attributes=tuple(
+    attributes = []
+    for index, name in enumerate(table.attributes):
+        counts = Counter(case[index] for case in table.cases)
+        missing = counts.pop(None, 0)
+        attributes.append(
             AttributeStats(
                 name=name,
                 kind=table.kinds[index],
-                counts=dict(Counter(case[index] for case in table.cases)),
-                missing=0,
+                counts=dict(counts),
+                missing=missing,
             )
-            for index, name in enumerate(table.attributes)
-        ),
+        )
+    return TableStats(
+        attributes=tuple(attributes),
         decision=table.decision,
         class_counts=dict(Counter(table.decisions)),
     )

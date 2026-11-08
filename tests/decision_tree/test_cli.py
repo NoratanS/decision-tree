@@ -377,3 +377,46 @@ def test_test_case_with_text_in_a_continuous_column_gives_a_clear_error(write_ta
 
     assert result.exit_code == 1
     assert "line 2: humidity is continuous but 'high' is not a number" in result.stderr
+
+
+def test_stats_reports_missing_values_with_the_default_markers(write_table):
+    path = write_table("old,?,up\n,NA,down\nnew,yes,up\n")
+
+    result = runner.invoke(app, ["stats", str(path)])
+
+    assert result.exit_code == 0, result.output
+    assert "a1 (discrete): 2 values, 1 missing" in result.stdout
+    assert "a2 (discrete): 1 value, 2 missing" in result.stdout
+
+
+def test_missing_option_is_a_comma_list_where_an_empty_item_is_the_empty_cell(
+    write_table,
+):
+    path = write_table("old,-,up\n,?,down\nnew,yes,up\n")
+
+    only_dash = runner.invoke(app, ["stats", str(path), "--missing", "-"])
+    dash_and_empty = runner.invoke(app, ["stats", str(path), "--missing", "-,"])
+
+    assert only_dash.exit_code == 0, only_dash.output
+    assert "a1 (discrete): 3 values, 0 missing" in only_dash.stdout
+    assert "a2 (discrete): 2 values, 1 missing" in only_dash.stdout
+    assert "a1 (discrete): 2 values, 1 missing" in dash_and_empty.stdout
+
+
+def test_train_with_missing_values_shows_fractional_leaf_counts(write_table):
+    text = (DATA / "golf.txt").read_text().replace("overcast, 72, 90", "?, 72, 90")
+    args = [str(write_table(text)), *GOLF_ARGS[1:], "--missing", "?"]
+
+    result = runner.invoke(app, ["train", *args])
+
+    assert result.exit_code == 0, result.output
+    assert "outlook = overcast: Play (3.2)\n" in result.stdout
+    assert "|   windy = true: Don't Play (2.4/0.4)\n" in result.stdout
+
+
+def test_missing_decision_gives_one_line_error_naming_the_line(write_table):
+    result = runner.invoke(app, ["train", str(write_table("old up\nnew ?\n"))])
+
+    assert result.exit_code == 1
+    assert result.stderr.strip().count("\n") == 0
+    assert "line 2: the decision is missing" in result.stderr

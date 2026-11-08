@@ -3,6 +3,10 @@
 A *class counts* argument is a sequence of weights, one per Decision Class.
 A *partition* is one class counts sequence per branch of a test.
 Logarithms are base 2 and zero-weight terms contribute 0.
+
+With Missing Values (Quinlan's method, ADR 0002), `counts` and `partition`
+cover only the cases whose tested value is known; `missing` is the weight of
+the rest.
 """
 
 import math
@@ -37,19 +41,28 @@ def info_split(partition: Partition) -> float:
     return sum(sum(branch) / total * info(branch) for branch in partition)
 
 
-def gain(counts: ClassCounts, partition: Partition) -> float:
-    """Gain(X,T) = Info(T) - Info(X,T)."""
-    return info(counts) - info_split(partition)
+def gain(counts: ClassCounts, partition: Partition, *, missing: float = 0.0) -> float:
+    """Gain(X,T) = F * (Info(T) - Info(X,T)), F the known fraction of the weight."""
+    gained = info(counts) - info_split(partition)
+    if missing <= 0:
+        return gained
+    known = sum(counts)
+    return known / (known + missing) * gained if known > 0 else 0.0
 
 
-def split_info(partition: Partition) -> float:
-    """Split Info(X,T): Entropy of the branch sizes, ignoring Decision Classes."""
-    return info([sum(branch) for branch in partition])
+def split_info(partition: Partition, *, missing: float = 0.0) -> float:
+    """Split Info(X,T): Entropy of the branch sizes, ignoring Decision Classes.
+
+    The cases with a Missing Value count as one more branch, as in C4.5.
+    """
+    return info([*(sum(branch) for branch in partition), missing])
 
 
-def gain_ratio(counts: ClassCounts, partition: Partition) -> float:
+def gain_ratio(
+    counts: ClassCounts, partition: Partition, *, missing: float = 0.0
+) -> float:
     """Gain Ratio = Gain / Split Info; 0 when Split Info is 0 (a one-branch test)."""
-    split = split_info(partition)
+    split = split_info(partition, missing=missing)
     if split <= 0:
         return 0.0
-    return gain(counts, partition) / split
+    return gain(counts, partition, missing=missing) / split
