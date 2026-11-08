@@ -5,7 +5,7 @@ import pytest
 from decision_tree import BuildOptions, ReadOptions, build_tree, evaluate, load_table
 from decision_tree.pruning import estimated_errors, prune
 from decision_tree.render import render_plain
-from decision_tree.tree import Leaf, Node, size
+from decision_tree.tree import DiscreteTest, Leaf, Node, size
 
 DATA = Path(__file__).parent.parent / "data"
 
@@ -43,8 +43,7 @@ def _book_subtree():
     # Subtree estimate 6×0.206 + 9×0.143 + 1×0.750 = 3.273; as a Leaf of 16
     # cases with 1 error, 16×0.157 = 2.512, so the subtree is replaced.
     return Node(
-        attribute="education spending",
-        index=0,
+        test=DiscreteTest("education spending", 0, ("n", "u", "y")),
         branches={
             "n": Leaf("democrat", {"democrat": 6.0, "republican": 0.0}),
             "u": Leaf("democrat", {"democrat": 9.0, "republican": 0.0}),

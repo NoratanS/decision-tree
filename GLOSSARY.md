@@ -73,6 +73,14 @@ Gain(X,T) / SplitInfo(X,T); corrects Gain's bias toward attributes with many val
 A point in the tree that tests one conditional attribute and has one branch per outcome.
 _Avoid_: split, decision node
 
+**Test**:
+What a Node asks of a case's value of one conditional attribute: a discrete test (one branch per value) or a threshold test (≤ threshold / > threshold).
+_Avoid_: split, condition
+
+**Candidate Test**:
+A test that is allowed at a Node (at least two branches hold the minimum number of cases), scored by its Gain; tree growth picks one of them or makes a Leaf.
+_Avoid_: candidate split
+
 **Leaf**:
 A point in the tree that assigns a decision class.
 _Avoid_: terminal node

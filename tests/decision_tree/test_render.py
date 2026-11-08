@@ -14,7 +14,7 @@ from decision_tree.render import (
     render_plain,
     set_name,
 )
-from decision_tree.tree import Leaf, Node
+from decision_tree.tree import DiscreteTest, Leaf, Node, ThresholdTest
 
 
 def test_leaf_without_errors_shows_its_weight():
@@ -31,8 +31,7 @@ def test_fractional_weights_have_one_decimal():
 
 def test_nested_nodes_are_indented_with_bars():
     inner = Node(
-        "a2",
-        1,
+        DiscreteTest("a2", 1, ("p", "q")),
         {
             "p": Leaf("yes", {"yes": 2.0, "no": 0.0}),
             "q": Leaf("no", {"yes": 0.0, "no": 1.0}),
@@ -40,8 +39,7 @@ def test_nested_nodes_are_indented_with_bars():
         {"yes": 2.0, "no": 1.0},
     )
     tree = Node(
-        "a1",
-        0,
+        DiscreteTest("a1", 0, ("x", "y")),
         {"x": inner, "y": Leaf("no", {"yes": 0.0, "no": 3.0})},
         {"yes": 2.0, "no": 4.0},
     )
@@ -53,14 +51,12 @@ def test_nested_nodes_are_indented_with_bars():
 
 def test_threshold_tests_print_like_c45():
     tree = Node(
-        "humidity",
-        2,
+        ThresholdTest("humidity", 2, 75.0),
         {
             "<=": Leaf("Play", {"Play": 2.0, "Don't Play": 0.0}),
             ">": Leaf("Don't Play", {"Play": 0.0, "Don't Play": 3.0}),
         },
         {"Play": 2.0, "Don't Play": 3.0},
-        threshold=75.0,
     )
 
     assert render_plain(tree) == (
@@ -74,11 +70,9 @@ def test_threshold_tests_print_like_c45():
 )
 def test_thresholds_print_without_a_needless_decimal_point(threshold, text):
     tree = Node(
-        "a1",
-        0,
+        ThresholdTest("a1", 0, threshold),
         {"<=": Leaf("y", {"y": 1.0}), ">": Leaf("y", {"y": 1.0})},
         {"y": 2.0},
-        threshold=threshold,
     )
 
     assert render_plain(tree).startswith(f"a1 <= {text} : ")
@@ -136,8 +130,7 @@ def test_set_name_describes_where_the_set_comes_from(evaluated_set, name):
 
 # A two-Leaf tree on `a1`, and the single Leaf it prunes to.
 SPLIT_TREE = Node(
-    "a1",
-    0,
+    DiscreteTest("a1", 0, ("x", "y")),
     {
         "x": Leaf("yes", {"yes": 3.0, "no": 0.0}),
         "y": Leaf("no", {"yes": 1.0, "no": 2.0}),

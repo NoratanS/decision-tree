@@ -46,13 +46,7 @@ def _prune(tree: Tree, confidence: float) -> tuple[Tree, float]:
     leaf_errors = _estimated_errors(leaf.total, leaf.errors, confidence)
     if leaf_errors <= subtree_errors + EPSILON:
         return leaf, leaf_errors
-    return Node(
-        attribute=tree.attribute,
-        index=tree.index,
-        branches=branches,
-        distribution=tree.distribution,
-        threshold=tree.threshold,
-    ), subtree_errors
+    return Node(tree.test, branches, tree.distribution), subtree_errors
 
 
 def estimated_errors(weight: float, errors: float, *, confidence: float) -> float:

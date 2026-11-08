@@ -4,7 +4,7 @@ import pytest
 
 from decision_tree.builder import build_tree
 from decision_tree.table import ReadOptions, load_table
-from decision_tree.tree import Leaf, Node, classify
+from decision_tree.tree import DiscreteTest, Leaf, Node, ThresholdTest, classify
 
 DATA = Path(__file__).parent.parent / "data"
 
@@ -22,7 +22,9 @@ def test_each_stock_market_case_gets_its_training_decision_with_probability_one(
 
 def test_impure_leaf_gives_its_class_proportions():
     tree = Node(
-        "a1", 0, {"x": Leaf("yes", {"yes": 3.0, "no": 1.0})}, {"yes": 3.0, "no": 1.0}
+        DiscreteTest("a1", 0, ("x",)),
+        {"x": Leaf("yes", {"yes": 3.0, "no": 1.0})},
+        {"yes": 3.0, "no": 1.0},
     )
 
     assert classify(tree, ("x",)) == {"yes": 0.75, "no": 0.25}
@@ -55,14 +57,12 @@ def test_golf_outlook_never_seen_in_training_is_classified_as_missing():
 
 def humidity_node():
     return Node(
-        "humidity",
-        2,
+        ThresholdTest("humidity", 2, 75.0),
         {
             "<=": Leaf("Play", {"Play": 2.0, "Don't Play": 0.0}),
             ">": Leaf("Don't Play", {"Play": 0.0, "Don't Play": 3.0}),
         },
         {"Play": 2.0, "Don't Play": 3.0},
-        threshold=75.0,
     )
 
 
@@ -96,8 +96,7 @@ def test_golf_sunny_case_with_missing_humidity_matches_reference_page():
 
 def test_missing_value_combines_every_branch_weighted_by_its_size():
     tree = Node(
-        "a1",
-        0,
+        DiscreteTest("a1", 0, ("x", "y", "z")),
         {
             "x": Leaf("yes", {"yes": 3.0, "no": 1.0}),
             "y": Leaf("no", {"yes": 0.0, "no": 4.0}),
@@ -108,3 +107,40 @@ def test_missing_value_combines_every_branch_weighted_by_its_size():
 
     # x: 4/8 * (0.75, 0.25), y: 4/8 * (0, 1), z: empty, no weight.
     assert classify(tree, (None,)) == {"yes": 0.375, "no": 0.625}
+
+
+OUTLOOK = DiscreteTest("outlook", 0, ("sunny", "overcast", "rain"))
+HUMIDITY = ThresholdTest("humidity", 2, 75.0)
+
+
+@pytest.mark.parametrize(
+    ("value", "branch"),
+    [("sunny", "sunny"), ("rain", "rain"), (None, None), ("foggy", None)],
+)
+def test_discrete_test_routes_a_known_value_to_its_branch_and_others_nowhere(
+    value, branch
+):
+    assert OUTLOOK.route(value) == branch
+
+
+@pytest.mark.parametrize(
+    ("value", "branch"),
+    [
+        ("70", "<="),
+        ("75", "<="),
+        (75.0, "<="),
+        ("75.5", ">"),
+        (90.0, ">"),
+        (None, None),
+    ],
+)
+def test_threshold_test_routes_values_up_to_the_threshold_left(value, branch):
+    assert HUMIDITY.route(value) == branch
+
+
+def test_tests_know_their_branches_and_whether_the_attribute_stays_available():
+    assert OUTLOOK.branch_keys == ("sunny", "overcast", "rain")
+    assert HUMIDITY.branch_keys == ("<=", ">")
+    # A Discrete Attribute is tested at most once per path (spec R5.2).
+    assert not OUTLOOK.keeps_attribute
+    assert HUMIDITY.keeps_attribute

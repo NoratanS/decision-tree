@@ -5,7 +5,7 @@ Cases travel as (case index, Case Weight) pairs so every count is weighted
 the tested attribute goes down every branch with a fraction of its weight.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from functools import cached_property
 from typing import Literal, NamedTuple
@@ -15,11 +15,13 @@ from decision_tree.splitting import best_threshold
 from decision_tree.table import DecisionTable
 from decision_tree.tree import (
     ClassDistribution,
+    DiscreteTest,
     Leaf,
     Node,
+    Test,
+    ThresholdTest,
     Tree,
     majority,
-    threshold_branch,
 )
 
 type WeightedCases = list[tuple[int, float]]
@@ -29,14 +31,12 @@ Criterion = Literal["gain", "gain-ratio"]
 
 
 class _Candidate(NamedTuple):
-    attribute: int
+    test: Test
     partition: Partition
     """Weighted class counts per branch, known values only."""
     missing: float
     """Weight of the Cases with a Missing Value for the attribute."""
     gain: float
-    threshold: float | None = None
-    """The Threshold of a test on a Continuous Attribute; None for a discrete test."""
 
 
 _SCORES: dict[Criterion, Callable[[_Candidate], float]] = {
@@ -103,50 +103,39 @@ class _Builder:
 
         most_common = majority(distribution)
         pure = sum(1 for w in distribution.values() if w > 0) == 1
-        test = None if pure else self._best_test(cases, available)
-        if test is None:
+        best = None if pure else self._best_test(cases, available)
+        if best is None:
             return Leaf(most_common, distribution)
 
-        attribute, table = test.attribute, self.table
-        # A Discrete Attribute is tested at most once per path (spec R5.2); a
-        # Continuous Attribute may be tested again with another Threshold.
-        remaining = available - {attribute} if test.threshold is None else available
+        test = best.test
+        remaining = available if test.keeps_attribute else available - {test.index}
         subsets = self._subsets(cases, test)
         return Node(
-            attribute=table.attributes[attribute],
-            index=attribute,
+            test=test,
             branches={
-                value: self.grow(subset, remaining, most_common)
-                for value, subset in subsets.items()
+                key: self.grow(subset, remaining, most_common)
+                for key, subset in subsets.items()
             },
             distribution=distribution,
-            threshold=test.threshold,
         )
 
-    def _subsets(
-        self, cases: WeightedCases, test: _Candidate
-    ) -> dict[str, WeightedCases]:
+    def _subsets(self, cases: WeightedCases, test: Test) -> dict[str, WeightedCases]:
         """The Cases of each branch of `test`, keyed as in `Node.branches`.
 
         A Case with a Missing Value goes down every branch, its weight scaled by
-        the branch's share of the known weight (spec R5.5). Zero shares are
-        dropped, so an empty branch stays empty.
+        the branch's share of the known weight (the Missing Value weight rule in
+        `tree.py`, spec R5.5). Zero shares are dropped, so an empty branch stays
+        empty.
         """
-        attribute, threshold, rows = test.attribute, test.threshold, self.table.cases
-        if threshold is None:
-            subsets: dict[str, WeightedCases] = {v: [] for v in self._values[attribute]}
-        else:
-            subsets = {"<=": [], ">": []}
-            numbers = self._numbers[attribute]
+        subsets: dict[str, WeightedCases] = {key: [] for key in test.branch_keys}
+        column = self._columns[test.index]
         missing: WeightedCases = []
         for i, weight in cases:
-            value = rows[i][attribute]
-            if value is None:
+            key = test.route(column[i])
+            if key is None:
                 missing.append((i, weight))
-                continue
-            if threshold is not None:
-                value = threshold_branch(numbers[i], threshold)
-            subsets[value].append((i, weight))
+            else:
+                subsets[key].append((i, weight))
         if missing:
             branch_weight = {
                 key: sum(w for _, w in subset) for key, subset in subsets.items()
@@ -211,7 +200,10 @@ class _Builder:
         partition = list(branches.values())
         if not self._enough_cases(partition):
             return None
-        return self._candidate(attribute, partition, missing)
+        test = DiscreteTest(
+            self.table.attributes[attribute], attribute, self._values[attribute]
+        )
+        return self._candidate(test, partition, missing)
 
     def _threshold_test(
         self, cases: WeightedCases, attribute: int
@@ -237,18 +229,17 @@ class _Builder:
         )
         if found is None:
             return None
-        return self._candidate(attribute, found.partition, missing, found.threshold)
+        test = ThresholdTest(
+            self.table.attributes[attribute], attribute, found.threshold
+        )
+        return self._candidate(test, found.partition, missing)
 
     def _candidate(
-        self,
-        attribute: int,
-        partition: Partition,
-        missing: float,
-        threshold: float | None = None,
+        self, test: Test, partition: Partition, missing: float
     ) -> _Candidate:
         """A test scored on the known Cases, Gain scaled by the known fraction."""
         score = gain(_known_counts(partition), partition, missing=missing)
-        return _Candidate(attribute, partition, missing, score, threshold)
+        return _Candidate(test, partition, missing, score)
 
     def _enough_cases(self, partition: Partition) -> bool:
         """At least two branches hold `min_cases` or more cases."""
@@ -274,6 +265,16 @@ class _Builder:
             a: [None if case[a] is None else float(case[a]) for case in table.cases]
             for a, kind in enumerate(table.kinds)
             if kind == "continuous"
+        }
+
+    @cached_property
+    def _columns(self) -> dict[int, Sequence[str | float | None]]:
+        """Each attribute's value in every Case, as its Test routes it: parsed
+        once for a Continuous Attribute, as text for a Discrete one."""
+        table = self.table
+        return {
+            a: self._numbers[a] if kind == "continuous" else [c[a] for c in table.cases]
+            for a, kind in enumerate(table.kinds)
         }
 
     @cached_property

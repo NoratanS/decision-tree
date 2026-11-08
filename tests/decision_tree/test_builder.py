@@ -162,7 +162,7 @@ def test_gain_criterion_picks_the_highest_gain():
     tree = build_tree(load_table(TEST_TABLE), BuildOptions(criterion="gain"))
 
     assert isinstance(tree, Node)
-    assert tree.attribute == "a1"
+    assert tree.test.attribute == "a1"
 
 
 def test_quinlan_gain_filter_drops_tests_below_average_gain():
@@ -171,7 +171,7 @@ def test_quinlan_gain_filter_drops_tests_below_average_gain():
     tree = build_tree(load_table(TEST_TABLE), BuildOptions(quinlan_gain_filter=True))
 
     assert isinstance(tree, Node)
-    assert tree.attribute == "a1"
+    assert tree.test.attribute == "a1"
 
 
 @pytest.mark.parametrize("criterion", ["gain", "gain-ratio"])
@@ -201,7 +201,7 @@ def test_quinlan_gain_filter_averages_only_tests_that_pass_min_cases(write_table
     tree = tree_from(write_table, text, quinlan_gain_filter=True, min_cases=2)
 
     assert isinstance(tree, Node)
-    assert tree.attribute == "a2"
+    assert tree.test.attribute == "a2"
 
 
 def test_quinlan_gain_filter_keeps_tests_exactly_at_the_average(write_table):
@@ -212,7 +212,7 @@ def test_quinlan_gain_filter_keeps_tests_exactly_at_the_average(write_table):
     tree = tree_from(write_table, text, quinlan_gain_filter=True, min_cases=1)
 
     assert isinstance(tree, Node)
-    assert tree.attribute == "a2"
+    assert tree.test.attribute == "a2"
 
 
 def test_mirror_image_tests_tie_and_the_leftmost_wins(write_table):

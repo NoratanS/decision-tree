@@ -14,7 +14,15 @@ from decision_tree.experiment import (
     TrainingSet,
 )
 from decision_tree.stats import AttributeStats, TableStats
-from decision_tree.tree import ClassDistribution, Leaf, Node, Tree, size
+from decision_tree.tree import (
+    ClassDistribution,
+    DiscreteTest,
+    Leaf,
+    Node,
+    ThresholdTest,
+    Tree,
+    size,
+)
 
 
 def render_plain(tree: Tree) -> str:
@@ -46,13 +54,15 @@ def branch_text(node: Node, value: str, *, math_signs: bool = False) -> str:
     """The outcome of a Node's test that leads to one branch.
 
     `a1 = old` for a discrete test; `humidity <= 75` or `humidity > 75` for a
-    Threshold test, where `value` is the branch key `"<="` or `">"`. With
-    `math_signs`, `<=` is written `≤`.
+    Threshold test, whose branch key is the comparison sign. With `math_signs`,
+    `<=` is written `≤`.
     """
-    if node.threshold is not None:
-        sign = "≤" if math_signs and value == "<=" else value
-        return f"{node.attribute} {sign} {number_text(node.threshold)}"
-    return f"{node.attribute} = {value}"
+    match node.test:
+        case ThresholdTest(attribute, _, threshold):
+            sign = value.replace("<=", "≤") if math_signs else value
+            return f"{attribute} {sign} {number_text(threshold)}"
+        case DiscreteTest(attribute):
+            return f"{attribute} = {value}"
 
 
 def number_text(number: float) -> str:
@@ -78,7 +88,7 @@ def leaf_counts(leaf: Leaf) -> str:
 def _render_node(node: Node, depth: int, lines: list[str]) -> None:
     indent = "|   " * depth
     # C4.5 puts a space before the colon on Threshold branches.
-    colon = " :" if node.threshold is not None else ":"
+    colon = " :" if isinstance(node.test, ThresholdTest) else ":"
     for value, child in node.branches.items():
         test = f"{indent}{branch_text(node, value)}{colon}"
         if isinstance(child, Leaf):

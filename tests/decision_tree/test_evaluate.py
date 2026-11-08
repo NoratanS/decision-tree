@@ -1,11 +1,10 @@
 from decision_tree.evaluate import classify_cases, evaluate
 from decision_tree.table import Cases, DecisionTable
-from decision_tree.tree import Leaf, Node
+from decision_tree.tree import DiscreteTest, Leaf, Node
 
 # a1 = x → yes, a1 = y → no
 TREE = Node(
-    "a1",
-    0,
+    DiscreteTest("a1", 0, ("x", "y")),
     {
         "x": Leaf("yes", {"yes": 2.0, "no": 0.0}),
         "y": Leaf("no", {"yes": 0.0, "no": 2.0}),
@@ -61,8 +60,7 @@ def test_empty_test_set_has_no_errors_and_rate_zero():
 
 def test_classify_cases_predicts_the_most_probable_class_and_counts_correct_ones():
     tree = Node(
-        "a1",
-        0,
+        DiscreteTest("a1", 0, ("x", "y")),
         {
             "x": Leaf("yes", {"yes": 2.0, "no": 0.0}),
             "y": Leaf("no", {"yes": 1.0, "no": 1.0}),
