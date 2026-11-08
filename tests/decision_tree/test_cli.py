@@ -583,3 +583,18 @@ def test_train_rich_no_prune_draws_one_tree():
     assert result.exit_code == 0, result.output
     assert "Unpruned tree (size 6)" in result.stdout
     assert "Pruned tree" not in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("options", "tree_file"),
+    [(["-m", "1"], "testowaTabDec-m1.tree.txt"), ([], "testowaTabDec-m2.tree.txt")],
+    ids=["course mode", "-m 2"],
+)
+def test_train_no_prune_prints_the_testowatabdec_reference_tree(options, tree_file):
+    # docs/assignment.md's derived trees; see test_builder.py.
+    expected = (DATA / tree_file).read_text()
+
+    result = runner.invoke(app, ["train", TESTOWA, *options, "--no-prune"])
+
+    assert result.exit_code == 0, result.output
+    assert unpruned_tree(result.stdout).startswith(expected + "\n")

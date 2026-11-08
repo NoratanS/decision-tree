@@ -31,28 +31,12 @@ a1 = mid:
 a1 = new: up (3.0)"""
 
 
-TESTOWA_M1_TREE = """\
-a3 = 0:
-|   a4 = 1:
-|   |   a1 = 0: 0 (1.0)
-|   |   a1 = 1: 0 (2.0)
-|   |   a1 = 2: 1 (1.0)
-|   a4 = 0: 1 (2.0)
-a3 = 1:
-|   a1 = 0: 1 (1.0)
-|   a1 = 1: 2 (0.0)
-|   a1 = 2: 2 (2.0)"""
-
-# docs/assignment.md: "-m 2 blocks a1 in two nodes, so the tree differs".
-# Empty branches (a1 = 1, a2 = 0) are kept, as spec R4.1 and R5.3 require.
-TESTOWA_M2_TREE = """\
-a3 = 0:
-|   a4 = 1:
-|   |   a2 = 1: 0 (2.0)
-|   |   a2 = 2: 0 (2.0/1.0)
-|   |   a2 = 0: 0 (0.0)
-|   a4 = 0: 1 (2.0)
-a3 = 1: 2 (3.0/1.0)"""
+# The docs/assignment.md trees for testowaTabDec.txt, unpruned, in course mode
+# (-m 1) and with the default -m 2, plus the empty branches spec R4.1 and R5.3
+# keep: a1 = 1 under a3 = 1 (-m 1) and a2 = 0 under a4 = 1 (-m 2).
+# test_cli.py checks `train --no-prune` against the same files.
+TESTOWA_M1_TREE = (DATA / "testowaTabDec-m1.tree.txt").read_text().rstrip("\n")
+TESTOWA_M2_TREE = (DATA / "testowaTabDec-m2.tree.txt").read_text().rstrip("\n")
 
 
 def tree_from(write_table, text, **options):
