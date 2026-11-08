@@ -7,27 +7,6 @@ from decision_tree.cli import app
 
 DATA = Path(__file__).parent.parent / "data"
 STOCK_MARKET = str(DATA / "stock_market.txt")
-STOCK_MARKET_TREE = """\
-a1 = old: down (3.0)
-a1 = mid:
-|   a2 = yes: down (2.0)
-|   a2 = no: up (2.0)
-a1 = new: up (3.0)
-"""
-STOCK_MARKET_MATRIX = (
-    "  actual \\ predicted  down  up\n"
-    "  down                   5   0\n"
-    "  up                     0   5\n"
-)
-# Pruning at 25% keeps the whole stock_market tree.
-STOCK_MARKET_OUTPUT = (
-    "Unpruned tree (size 6):\n" + STOCK_MARKET_TREE + "\n"
-    "Pruned tree (size 6, Confidence Level 25%):\n" + STOCK_MARKET_TREE + "\n"
-    "Unpruned tree on Training Set: 10 cases, 0 errors (0.0%)\n"
-    + STOCK_MARKET_MATRIX
-    + "\n"
-    "Pruned tree on Training Set: 10 cases, 0 errors (0.0%)\n" + STOCK_MARKET_MATRIX
-)
 GOLF_ARGS = [str(DATA / "golf.txt"), "--header", "--continuous", "temperature,humidity"]
 GOLF_TREE = """\
 outlook = overcast: Play (4.0)
@@ -66,20 +45,17 @@ def unpruned_tree(stdout):
     return stdout.split("\n", 1)[1]
 
 
-def test_train_prints_plain_text_when_piped():
-    result = runner.invoke(app, ["train", STOCK_MARKET])
+@pytest.mark.parametrize(
+    ("options", "env"), [([], {}), (["--plain"], TTY)], ids=["piped", "--plain"]
+)
+def test_train_prints_the_plain_report(options, env):
+    # The report's text is tested in test_render.py.
+    result = runner.invoke(app, ["train", STOCK_MARKET, *options], env=env)
 
-    assert result.exit_code == 0
-    assert result.stdout == STOCK_MARKET_OUTPUT
-
-
-def test_train_plain_flag_forces_plain_text_in_a_terminal():
-    result = runner.invoke(
-        app, ["train", STOCK_MARKET, "--plain"], env={"TTY_COMPATIBLE": "1"}
-    )
-
-    assert result.exit_code == 0
-    assert result.stdout == STOCK_MARKET_OUTPUT
+    assert result.exit_code == 0, result.output
+    assert result.stdout.startswith("Unpruned tree (size 6):\na1 = old: down (3.0)\n")
+    assert result.stdout.endswith("\n  up                     0   5\n")
+    assert "├──" not in result.stdout
 
 
 def test_train_draws_a_rich_tree_in_a_terminal():

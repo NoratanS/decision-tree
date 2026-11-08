@@ -72,6 +72,7 @@ def test_without_a_test_set_evaluates_both_trees_on_the_training_set():
     result = run_experiment(stock_market())
 
     assert result.pruned is not None
+    assert result.confidence == 0.25
     assert result.seed is None
     [training] = result.evaluations
     assert training.evaluated_set == TrainingSet()
@@ -84,10 +85,9 @@ def test_no_confidence_level_means_no_pruned_tree():
     result = run_experiment(stock_market(), confidence=None)
 
     assert result.pruned is None
+    assert result.confidence is None
     assert render_plain(result.unpruned).startswith("a1 = old: down (3.0)")
     assert [e.pruned for e in result.evaluations] == [None]
-    assert result.trees == (result.unpruned,)
-    assert [len(e.by_tree) for e in result.evaluations] == [1]
 
 
 def test_confidence_level_sets_how_much_is_pruned():
@@ -101,9 +101,7 @@ def test_confidence_level_sets_how_much_is_pruned():
     assert at_5.evaluations[0].pruned.errors == 5
     assert at_25.pruned is not None
     assert size(at_25.pruned) == size(at_25.unpruned) == 8
-    assert at_5.trees == (at_5.unpruned, at_5.pruned)
-    training = at_5.evaluations[0]
-    assert training.by_tree == (training.unpruned, training.pruned)
+    assert (at_5.confidence, at_25.confidence) == (0.05, 0.25)
 
 
 def test_build_options_reach_the_tree():

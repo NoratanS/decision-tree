@@ -25,20 +25,19 @@ from decision_tree.experiment import (
 from decision_tree.pruning import DEFAULT_CONFIDENCE
 from decision_tree.render import (
     CONFUSION_CORNER,
+    Block,
+    EvaluationBlock,
+    TreeBlock,
     accuracy_text,
     attribute_heading,
     branch_text,
     decision_heading,
-    evaluation_heading,
+    experiment_blocks,
     leaf_counts,
     probability_cells,
     render_classification_plain,
-    render_evaluation_plain,
-    render_plain,
+    render_experiment_plain,
     render_stats_plain,
-    set_name,
-    tree_heading,
-    tree_name,
 )
 from decision_tree.stats import TableStats, table_stats
 from decision_tree.table import (
@@ -231,25 +230,10 @@ def train(
     except SplitError as error:
         _fail(f"--split: {error}")
 
-    # Confidence Level in percent of each tree in `result.trees`; None: unpruned.
-    levels = (None, confidence)
-    terminal = not plain and out.is_terminal
-    for pruned_at, tree in zip(levels, result.trees, strict=False):
-        if pruned_at is not None:
-            out.print()
-        heading = tree_heading(tree, pruned_at=pruned_at)
-        if terminal:
-            out.print(_rich_tree(tree, heading))
-        else:
-            _print_plain(out, f"{heading}:\n{render_plain(tree)}")
-    print_evaluation = _print_rich_evaluation if terminal else _print_plain_evaluation
-    for on_set in result.evaluations:
-        for pruned_at, evaluation in zip(levels, on_set.by_tree, strict=False):
-            name = tree_name(pruned=pruned_at is not None)
-            out.print()
-            print_evaluation(
-                out, f"{name} on {set_name(on_set.evaluated_set)}", evaluation
-            )
+    if plain or not out.is_terminal:
+        _print_plain(out, render_experiment_plain(result))
+    else:
+        _print_rich_blocks(out, experiment_blocks(result))
 
 
 @app.command()
@@ -367,12 +351,20 @@ def _print_rich_stats(out: Console, summary: TableStats) -> None:
     out.print(_count_table("Class", summary.class_counts))
 
 
-def _print_plain_evaluation(out: Console, set_name: str, result: Evaluation) -> None:
-    _print_plain(out, render_evaluation_plain(set_name, result))
+def _print_rich_blocks(out: Console, blocks: list[Block]) -> None:
+    """Each block in the given order, one blank line apart."""
+    for i, block in enumerate(blocks):
+        if i:
+            out.print()
+        match block:
+            case TreeBlock(heading, tree):
+                out.print(_rich_tree(tree, heading))
+            case EvaluationBlock(heading, evaluation):
+                _print_heading(out, heading)
+                out.print(_rich_confusion(evaluation))
 
 
-def _print_rich_evaluation(out: Console, set_name: str, result: Evaluation) -> None:
-    _print_heading(out, evaluation_heading(set_name, result))
+def _rich_confusion(result: Evaluation) -> Table:
     table = Table(escape(CONFUSION_CORNER))
     for predicted in result.classes:
         table.add_column(escape(predicted), justify="right")
@@ -382,7 +374,7 @@ def _print_rich_evaluation(out: Console, set_name: str, result: Evaluation) -> N
             count = result.confusion[actual][predicted]
             cells.append(f"[{_count_style(actual, predicted, count)}]{count}[/]")
         table.add_row(escape(actual), *cells)
-    out.print(table)
+    return table
 
 
 def _print_rich_classification(out: Console, result: Classification) -> None:

@@ -1,11 +1,14 @@
 """Plain text: C4.5-style trees (spec R9), table statistics (spec R2),
-evaluations and set names (spec R8) and classified Cases (spec R10)."""
+evaluations and set names (spec R8), the Experiment report and classified Cases
+(spec R10)."""
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 from decision_tree.evaluate import Classification, Evaluation
 from decision_tree.experiment import (
     EvaluatedSet,
+    ExperimentResult,
     FileTestSet,
     HoldOutTestSet,
     TrainingSet,
@@ -29,12 +32,14 @@ def tree_name(*, pruned: bool) -> str:
 
 
 def tree_heading(tree: Tree, *, pruned_at: float | None = None) -> str:
-    """`Unpruned tree (size 8)`; with `pruned_at`, the Confidence Level in
-    percent, `Pruned tree (size 5, Confidence Level 25%)`."""
+    """`Unpruned tree (size 8)`; with `pruned_at` (a fraction), the Confidence
+    Level in percent, `Pruned tree (size 5, Confidence Level 25%)`."""
     name = tree_name(pruned=pruned_at is not None)
     if pruned_at is None:
         return f"{name} (size {size(tree)})"
-    return f"{name} (size {size(tree)}, Confidence Level {number_text(pruned_at)}%)"
+    # Rounded so that 0.07 shows as 7, not 7.000000000000001.
+    percent = number_text(round(pruned_at * 100, 10))
+    return f"{name} (size {size(tree)}, Confidence Level {percent}%)"
 
 
 def branch_text(node: Node, value: str, *, math_signs: bool = False) -> str:
@@ -160,17 +165,70 @@ def evaluation_heading(set_name: str, result: Evaluation) -> str:
     return f"{set_name}: {cases}, {errors} ({result.error_rate:.1%})"
 
 
-def render_evaluation_plain(set_name: str, result: Evaluation) -> str:
-    """The heading, then the confusion matrix; no final newline.
-
-    One row per actual class, one column per predicted class.
-    """
+def _confusion_lines(result: Evaluation) -> list[str]:
+    """The confusion matrix as aligned lines: one row per actual class, one
+    column per predicted class."""
     rows = [[CONFUSION_CORNER, *result.classes]]
     rows.extend(
         [actual, *(str(result.confusion[actual][p]) for p in result.classes)]
         for actual in result.classes
     )
-    return "\n".join([evaluation_heading(set_name, result), *_aligned_rows(rows)])
+    return _aligned_rows(rows)
+
+
+@dataclass(frozen=True)
+class TreeBlock:
+    """A tree under its heading, e.g. `Unpruned tree (size 8)`."""
+
+    heading: str
+    tree: Tree
+
+
+@dataclass(frozen=True)
+class EvaluationBlock:
+    """An evaluation under its heading, e.g.
+    `Pruned tree on Training Set: 14 cases, 5 errors (35.7%)`."""
+
+    heading: str
+    evaluation: Evaluation
+
+
+type Block = TreeBlock | EvaluationBlock
+"""One part of the Experiment report; the adapters print blocks blank-line apart."""
+
+
+def experiment_blocks(result: ExperimentResult) -> list[Block]:
+    """The report of an Experiment in order: the unpruned tree, the pruned tree
+    if any, then for each set the unpruned tree's evaluation and the pruned
+    tree's if any."""
+    blocks: list[Block] = [TreeBlock(tree_heading(result.unpruned), result.unpruned)]
+    if result.pruned is not None:
+        assert result.confidence is not None, "a pruned tree has a Confidence Level"
+        heading = tree_heading(result.pruned, pruned_at=result.confidence)
+        blocks.append(TreeBlock(heading, result.pruned))
+    for on_set in result.evaluations:
+        name = set_name(on_set.evaluated_set)
+        for pruned, evaluation in ((False, on_set.unpruned), (True, on_set.pruned)):
+            if evaluation is not None:
+                label = f"{tree_name(pruned=pruned)} on {name}"
+                blocks.append(
+                    EvaluationBlock(evaluation_heading(label, evaluation), evaluation)
+                )
+    return blocks
+
+
+def render_experiment_plain(result: ExperimentResult) -> str:
+    """The `train` report as plain text, blocks one blank line apart; no final
+    newline."""
+    return "\n\n".join(map(_block_plain, experiment_blocks(result)))
+
+
+def _block_plain(block: Block) -> str:
+    match block:
+        case TreeBlock(heading, tree):
+            return f"{heading}:\n{render_plain(tree)}"
+        case EvaluationBlock(heading, evaluation):
+            return "\n".join([heading, *_confusion_lines(evaluation)])
 
 
 def render_classification_plain(result: Classification) -> str:

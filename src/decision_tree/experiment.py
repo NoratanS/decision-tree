@@ -73,26 +73,19 @@ class SetEvaluation:
     pruned: Evaluation | None
     """None when the Experiment does not prune."""
 
-    @property
-    def by_tree(self) -> tuple[Evaluation, ...]:
-        """The unpruned tree's evaluation, then the pruned tree's if any."""
-        return (self.unpruned,) if self.pruned is None else (self.unpruned, self.pruned)
-
 
 @dataclass(frozen=True)
 class ExperimentResult:
     unpruned: Tree
     pruned: Tree | None
     """None when the Experiment does not prune."""
+    confidence: float | None
+    """The Confidence Level `pruned` was pruned at, a fraction; None without
+    pruning."""
     seed: int | None
     """The seed of the hold-out split; None without a split."""
     evaluations: tuple[SetEvaluation, ...]
     """The Training Set first, then the Test Set if there is one."""
-
-    @property
-    def trees(self) -> tuple[Tree, ...]:
-        """The unpruned tree, then the pruned tree if any."""
-        return (self.unpruned,) if self.pruned is None else (self.unpruned, self.pruned)
 
 
 def run_experiment(
@@ -137,7 +130,7 @@ def run_experiment(
         )
         for evaluated_set, table in sets
     )
-    return ExperimentResult(unpruned, pruned, seed, evaluations)
+    return ExperimentResult(unpruned, pruned, confidence, seed, evaluations)
 
 
 def hold_out(
