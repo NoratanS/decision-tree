@@ -22,6 +22,7 @@ build-backend = "uv_build"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = ["--import-mode=importlib"]
+markers = ["slow: takes seconds, not milliseconds; skip with -m \"not slow\""]
 
 [dependency-groups]
 dev = [
