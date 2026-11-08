@@ -6,25 +6,27 @@ from typer.testing import CliRunner
 from decision_tree.cli import app
 
 DATA = Path(__file__).parent.parent / "data"
-GIELDA = str(DATA / "gielda.txt")
-GIELDA_TREE = """\
+STOCK_MARKET = str(DATA / "stock_market.txt")
+STOCK_MARKET_TREE = """\
 a1 = old: down (3.0)
 a1 = mid:
 |   a2 = yes: down (2.0)
 |   a2 = no: up (2.0)
 a1 = new: up (3.0)
 """
-GIELDA_MATRIX = (
+STOCK_MARKET_MATRIX = (
     "  actual \\ predicted  down  up\n"
     "  down                   5   0\n"
     "  up                     0   5\n"
 )
-# Pruning at 25% keeps the whole gielda tree.
-GIELDA_OUTPUT = (
-    "Unpruned tree (size 6):\n" + GIELDA_TREE + "\n"
-    "Pruned tree (size 6, Confidence Level 25%):\n" + GIELDA_TREE + "\n"
-    "Unpruned tree on Training Set: 10 cases, 0 errors (0.0%)\n" + GIELDA_MATRIX + "\n"
-    "Pruned tree on Training Set: 10 cases, 0 errors (0.0%)\n" + GIELDA_MATRIX
+# Pruning at 25% keeps the whole stock_market tree.
+STOCK_MARKET_OUTPUT = (
+    "Unpruned tree (size 6):\n" + STOCK_MARKET_TREE + "\n"
+    "Pruned tree (size 6, Confidence Level 25%):\n" + STOCK_MARKET_TREE + "\n"
+    "Unpruned tree on Training Set: 10 cases, 0 errors (0.0%)\n"
+    + STOCK_MARKET_MATRIX
+    + "\n"
+    "Pruned tree on Training Set: 10 cases, 0 errors (0.0%)\n" + STOCK_MARKET_MATRIX
 )
 GOLF_ARGS = [str(DATA / "golf.txt"), "--header", "--continuous", "temperature,humidity"]
 GOLF_TREE = """\
@@ -36,7 +38,7 @@ outlook = rain:
 |   windy = true: Don't Play (2.0)
 |   windy = false: Play (3.0)
 """
-GIELDA_STATS = """\
+STOCK_MARKET_STATS = """\
 a1 (discrete): 3 values, 0 missing
   old  3
   mid  4
@@ -65,23 +67,23 @@ def unpruned_tree(stdout):
 
 
 def test_train_prints_plain_text_when_piped():
-    result = runner.invoke(app, ["train", GIELDA])
+    result = runner.invoke(app, ["train", STOCK_MARKET])
 
     assert result.exit_code == 0
-    assert result.stdout == GIELDA_OUTPUT
+    assert result.stdout == STOCK_MARKET_OUTPUT
 
 
 def test_train_plain_flag_forces_plain_text_in_a_terminal():
     result = runner.invoke(
-        app, ["train", GIELDA, "--plain"], env={"TTY_COMPATIBLE": "1"}
+        app, ["train", STOCK_MARKET, "--plain"], env={"TTY_COMPATIBLE": "1"}
     )
 
     assert result.exit_code == 0
-    assert result.stdout == GIELDA_OUTPUT
+    assert result.stdout == STOCK_MARKET_OUTPUT
 
 
 def test_train_draws_a_rich_tree_in_a_terminal():
-    result = runner.invoke(app, ["train", GIELDA], env={"TTY_COMPATIBLE": "1"})
+    result = runner.invoke(app, ["train", STOCK_MARKET], env={"TTY_COMPATIBLE": "1"})
 
     assert result.exit_code == 0
     assert "├──" in result.stdout
@@ -123,23 +125,23 @@ def test_wrong_column_count_gives_one_line_error_naming_the_line(write_table):
 
 
 def test_stats_prints_plain_blocks_when_piped():
-    result = runner.invoke(app, ["stats", GIELDA])
+    result = runner.invoke(app, ["stats", STOCK_MARKET])
 
     assert result.exit_code == 0
-    assert result.stdout == GIELDA_STATS
+    assert result.stdout == STOCK_MARKET_STATS
 
 
 def test_stats_plain_flag_forces_plain_text_in_a_terminal():
     result = runner.invoke(
-        app, ["stats", GIELDA, "--plain"], env={"TTY_COMPATIBLE": "1"}
+        app, ["stats", STOCK_MARKET, "--plain"], env={"TTY_COMPATIBLE": "1"}
     )
 
     assert result.exit_code == 0
-    assert result.stdout == GIELDA_STATS
+    assert result.stdout == STOCK_MARKET_STATS
 
 
 def test_stats_draws_rich_tables_in_a_terminal():
-    result = runner.invoke(app, ["stats", GIELDA], env={"TTY_COMPATIBLE": "1"})
+    result = runner.invoke(app, ["stats", STOCK_MARKET], env={"TTY_COMPATIBLE": "1"})
 
     assert result.exit_code == 0
     assert "│" in result.stdout
@@ -229,11 +231,11 @@ def test_unknown_override_column_gives_one_line_error(write_table):
     assert "unknown column 'wind'" in result.stderr
 
 
-TESTOWA = str(DATA / "testowaTabDec.txt")
+TEST_TABLE = str(DATA / "test_table.txt")
 
 
 def test_train_default_uses_gain_ratio_and_m_2():
-    result = runner.invoke(app, ["train", TESTOWA])
+    result = runner.invoke(app, ["train", TEST_TABLE])
 
     assert result.exit_code == 0, result.output
     assert unpruned_tree(result.stdout).startswith(
@@ -242,7 +244,7 @@ def test_train_default_uses_gain_ratio_and_m_2():
 
 
 def test_train_m_option_sets_the_minimum_branch_size():
-    result = runner.invoke(app, ["train", TESTOWA, "-m", "1"])
+    result = runner.invoke(app, ["train", TEST_TABLE, "-m", "1"])
 
     assert result.exit_code == 0, result.output
     assert unpruned_tree(result.stdout).startswith(
@@ -251,21 +253,21 @@ def test_train_m_option_sets_the_minimum_branch_size():
 
 
 def test_train_criterion_gain_ranks_tests_by_gain():
-    result = runner.invoke(app, ["train", TESTOWA, "--criterion", "gain"])
+    result = runner.invoke(app, ["train", TEST_TABLE, "--criterion", "gain"])
 
     assert result.exit_code == 0, result.output
     assert unpruned_tree(result.stdout).startswith("a1 = ")
 
 
 def test_train_criterion_gain_ratio_can_be_named():
-    result = runner.invoke(app, ["train", TESTOWA, "--criterion", "gain-ratio"])
+    result = runner.invoke(app, ["train", TEST_TABLE, "--criterion", "gain-ratio"])
 
     assert result.exit_code == 0, result.output
     assert unpruned_tree(result.stdout).startswith("a3 = ")
 
 
 def test_train_quinlan_gain_filter_changes_the_root():
-    result = runner.invoke(app, ["train", TESTOWA, "--quinlan-gain-filter"])
+    result = runner.invoke(app, ["train", TEST_TABLE, "--quinlan-gain-filter"])
 
     assert result.exit_code == 0, result.output
     assert unpruned_tree(result.stdout).startswith("a1 = ")
@@ -275,19 +277,19 @@ def test_train_quinlan_gain_filter_changes_the_root():
     "option", [["--criterion", "entropy"], ["-m", "0"], ["-m", "two"]]
 )
 def test_train_rejects_bad_split_options(option):
-    result = runner.invoke(app, ["train", TESTOWA, *option])
+    result = runner.invoke(app, ["train", TEST_TABLE, *option])
 
     assert result.exit_code == 2
 
 
 # Case 1 is a training case with its decision flipped: one error.
-GIELDA_TEST = "old yes swr up\nnew no hwr up\n"
+STOCK_MARKET_TEST = "old yes swr up\nnew no hwr up\n"
 
 
 def test_train_test_reports_training_and_test_set(write_table):
-    test = str(write_table(GIELDA_TEST, name="test.txt"))
+    test = str(write_table(STOCK_MARKET_TEST, name="test.txt"))
 
-    result = runner.invoke(app, ["train", GIELDA, "--test", test])
+    result = runner.invoke(app, ["train", STOCK_MARKET, "--test", test])
 
     assert result.exit_code == 0, result.output
     test_matrix = (
@@ -296,7 +298,7 @@ def test_train_test_reports_training_and_test_set(write_table):
         "  up                     1   1\n"
     )
     assert result.stdout == (
-        GIELDA_OUTPUT + "\n"
+        STOCK_MARKET_OUTPUT + "\n"
         f"Unpruned tree on Test Set ({test}): 2 cases, 1 error (50.0%)\n"
         + test_matrix
         + "\n"
@@ -305,10 +307,10 @@ def test_train_test_reports_training_and_test_set(write_table):
 
 
 def test_train_draws_rich_confusion_matrices_in_a_terminal(write_table):
-    test = str(write_table(GIELDA_TEST, name="test.txt"))
+    test = str(write_table(STOCK_MARKET_TEST, name="test.txt"))
 
     result = runner.invoke(
-        app, ["train", GIELDA, "--test", test], env={"TTY_COMPATIBLE": "1"}
+        app, ["train", STOCK_MARKET, "--test", test], env={"TTY_COMPATIBLE": "1"}
     )
 
     assert result.exit_code == 0, result.output
@@ -343,7 +345,7 @@ def test_train_split_without_a_seed_prints_the_seed_it_used():
 @pytest.mark.parametrize(
     ("options", "message"),
     [
-        (["--test", GIELDA, "--split", "0.7"], "--test and --split"),
+        (["--test", STOCK_MARKET, "--split", "0.7"], "--test and --split"),
         (["--seed", "42"], "--seed needs --split"),
         (["--split", "0.01"], "no Training Set"),
     ],
@@ -358,7 +360,7 @@ def test_train_bad_evaluation_options_give_one_line_error(options, message):
 
 @pytest.mark.parametrize("ratio", ["0", "1", "1.5"])
 def test_train_rejects_a_split_ratio_outside_0_1(ratio):
-    result = runner.invoke(app, ["train", GIELDA, "--split", ratio])
+    result = runner.invoke(app, ["train", STOCK_MARKET, "--split", ratio])
 
     assert result.exit_code == 2
 
@@ -366,7 +368,7 @@ def test_train_rejects_a_split_ratio_outside_0_1(ratio):
 def test_test_set_with_another_column_count_gives_one_line_error(write_table):
     test = str(write_table("old yes up\n", name="test.txt"))
 
-    result = runner.invoke(app, ["train", GIELDA, "--test", test])
+    result = runner.invoke(app, ["train", STOCK_MARKET, "--test", test])
 
     assert result.exit_code == 1
     assert result.stderr.strip().count("\n") == 0
@@ -377,7 +379,7 @@ def test_test_case_with_an_unseen_value_is_classified_as_missing(write_table):
     # foggy: old 3/10 down, mid 4/10 and new 3/10 up, so up is right.
     test = str(write_table("old yes swr up\nfoggy no hwr up\n", name="test.txt"))
 
-    result = runner.invoke(app, ["train", GIELDA, "--test", test])
+    result = runner.invoke(app, ["train", STOCK_MARKET, "--test", test])
 
     assert result.exit_code == 0
     assert "2 cases, 1 error (50.0%)" in result.stdout
@@ -468,7 +470,7 @@ def test_classify_cases_without_decisions_prints_class_and_distribution(write_ta
 def test_classify_cases_with_decisions_marks_errors_and_reports_accuracy(write_table):
     cases = str(write_table("old yes swr down\nnew no swr down\n", name="cases.txt"))
 
-    result = runner.invoke(app, ["classify", GIELDA, cases])
+    result = runner.invoke(app, ["classify", STOCK_MARKET, cases])
 
     assert result.exit_code == 0
     assert result.stdout == (
@@ -486,7 +488,7 @@ def test_classify_cases_with_another_column_count_give_one_line_error(
 ):
     cases = str(write_table(text, name="cases.txt"))
 
-    result = runner.invoke(app, ["classify", GIELDA, cases])
+    result = runner.invoke(app, ["classify", STOCK_MARKET, cases])
 
     assert result.exit_code == 1
     assert result.stderr.strip().count("\n") == 0
@@ -510,7 +512,7 @@ def test_classify_draws_a_rich_table_in_a_terminal(write_table):
     cases = str(write_table("old yes swr down\nnew no swr down\n", name="cases.txt"))
 
     result = runner.invoke(
-        app, ["classify", GIELDA, cases], env={"TTY_COMPATIBLE": "1"}
+        app, ["classify", STOCK_MARKET, cases], env={"TTY_COMPATIBLE": "1"}
     )
 
     assert result.exit_code == 0
@@ -520,12 +522,12 @@ def test_classify_draws_a_rich_table_in_a_terminal(write_table):
 
 
 def test_classify_takes_the_build_options(write_table):
-    # With gain, gielda's root is still a1, but -m 5 leaves the tree one Leaf:
+    # With gain, stock_market's root is still a1, but -m 5 leaves the tree one Leaf:
     # every case gets down 0.5 / up 0.5, predicted down (first in file order).
     cases = str(write_table("new no hwr\n", name="cases.txt"))
 
     result = runner.invoke(
-        app, ["classify", GIELDA, cases, "--criterion", "gain", "-m", "5"]
+        app, ["classify", STOCK_MARKET, cases, "--criterion", "gain", "-m", "5"]
     )
 
     assert result.exit_code == 0
@@ -533,12 +535,13 @@ def test_classify_takes_the_build_options(write_table):
 
 
 def test_train_no_prune_shows_only_the_unpruned_tree():
-    result = runner.invoke(app, ["train", GIELDA, "--no-prune"])
+    result = runner.invoke(app, ["train", STOCK_MARKET, "--no-prune"])
 
     assert result.exit_code == 0, result.output
     assert result.stdout == (
-        "Unpruned tree (size 6):\n" + GIELDA_TREE + "\n"
-        "Unpruned tree on Training Set: 10 cases, 0 errors (0.0%)\n" + GIELDA_MATRIX
+        "Unpruned tree (size 6):\n" + STOCK_MARKET_TREE + "\n"
+        "Unpruned tree on Training Set: 10 cases, 0 errors (0.0%)\n"
+        + STOCK_MARKET_MATRIX
     )
 
 
@@ -554,7 +557,7 @@ def test_train_c_option_sets_the_confidence_level():
 
 
 def test_train_confidence_level_may_be_fractional():
-    result = runner.invoke(app, ["train", GIELDA, "--confidence", "12.5"])
+    result = runner.invoke(app, ["train", STOCK_MARKET, "--confidence", "12.5"])
 
     assert result.exit_code == 0, result.output
     assert "Pruned tree (size 6, Confidence Level 12.5%):" in result.stdout
@@ -562,7 +565,7 @@ def test_train_confidence_level_may_be_fractional():
 
 @pytest.mark.parametrize("value", ["0", "-5", "101", "high"])
 def test_train_rejects_a_confidence_level_outside_0_100(value):
-    result = runner.invoke(app, ["train", GIELDA, "-c", value])
+    result = runner.invoke(app, ["train", STOCK_MARKET, "-c", value])
 
     assert result.exit_code == 2
 
@@ -578,7 +581,7 @@ def test_train_draws_both_rich_trees_in_a_terminal():
 
 
 def test_train_rich_no_prune_draws_one_tree():
-    result = runner.invoke(app, ["train", GIELDA, "--no-prune"], env=TTY)
+    result = runner.invoke(app, ["train", STOCK_MARKET, "--no-prune"], env=TTY)
 
     assert result.exit_code == 0, result.output
     assert "Unpruned tree (size 6)" in result.stdout
@@ -587,14 +590,14 @@ def test_train_rich_no_prune_draws_one_tree():
 
 @pytest.mark.parametrize(
     ("options", "tree_file"),
-    [(["-m", "1"], "testowaTabDec-m1.tree.txt"), ([], "testowaTabDec-m2.tree.txt")],
+    [(["-m", "1"], "test_table-m1.tree.txt"), ([], "test_table-m2.tree.txt")],
     ids=["course mode", "-m 2"],
 )
-def test_train_no_prune_prints_the_testowatabdec_reference_tree(options, tree_file):
+def test_train_no_prune_prints_the_test_table_reference_tree(options, tree_file):
     # docs/assignment.md's derived trees; see test_builder.py.
     expected = (DATA / tree_file).read_text()
 
-    result = runner.invoke(app, ["train", TESTOWA, *options, "--no-prune"])
+    result = runner.invoke(app, ["train", TEST_TABLE, *options, "--no-prune"])
 
     assert result.exit_code == 0, result.output
     assert unpruned_tree(result.stdout).startswith(expected + "\n")

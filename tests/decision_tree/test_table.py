@@ -7,8 +7,8 @@ from decision_tree.table import TableError, load_cases, load_table
 DATA = Path(__file__).parent.parent / "data"
 
 
-def test_gielda_loads_with_default_column_names():
-    table = load_table(DATA / "gielda.txt")
+def test_stock_market_loads_with_default_column_names():
+    table = load_table(DATA / "stock_market.txt")
 
     assert table.attributes == ("a1", "a2", "a3")
     assert table.decision == "d"
@@ -18,7 +18,7 @@ def test_gielda_loads_with_default_column_names():
 
 
 def test_decision_classes_are_in_file_order():
-    assert load_table(DATA / "gielda.txt").classes == ("down", "up")
+    assert load_table(DATA / "stock_market.txt").classes == ("down", "up")
 
 
 def test_wrong_column_count_names_the_line(write_table):
@@ -240,7 +240,7 @@ def test_number_words_are_text(write_table):
 
 
 def test_course_tables_are_all_discrete():
-    for file in ("gielda.txt", "testowaTabDec.txt"):
+    for file in ("stock_market.txt", "test_table.txt"):
         table = load_table(DATA / file)
         assert set(table.kinds) == {"discrete"}
 

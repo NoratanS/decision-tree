@@ -6,8 +6,8 @@ from decision_tree.table import load_table
 DATA = Path(__file__).parent.parent / "data"
 
 
-def test_gielda_attribute_value_counts_in_file_order():
-    stats = table_stats(load_table(DATA / "gielda.txt"))
+def test_stock_market_attribute_value_counts_in_file_order():
+    stats = table_stats(load_table(DATA / "stock_market.txt"))
 
     a1 = stats.attributes[0]
     assert a1.name == "a1"
@@ -20,15 +20,15 @@ def test_gielda_attribute_value_counts_in_file_order():
     assert dict(stats.attributes[2].counts) == {"swr": 6, "hwr": 4}
 
 
-def test_gielda_decision_class_counts():
-    stats = table_stats(load_table(DATA / "gielda.txt"))
+def test_stock_market_decision_class_counts():
+    stats = table_stats(load_table(DATA / "stock_market.txt"))
 
     assert stats.decision == "d"
     assert list(stats.class_counts.items()) == [("down", 5), ("up", 5)]
 
 
-def test_testowatabdec_counts_match_the_table():
-    stats = table_stats(load_table(DATA / "testowaTabDec.txt"))
+def test_test_table_counts_match_the_table():
+    stats = table_stats(load_table(DATA / "test_table.txt"))
 
     assert [list(a.counts.items()) for a in stats.attributes] == [
         [("0", 3), ("1", 2), ("2", 4)],

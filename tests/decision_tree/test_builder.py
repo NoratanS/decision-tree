@@ -8,7 +8,7 @@ from decision_tree.table import load_table
 from decision_tree.tree import Leaf, Node, classify
 
 DATA = Path(__file__).parent.parent / "data"
-TESTOWA = DATA / "testowaTabDec.txt"
+TEST_TABLE = DATA / "test_table.txt"
 # The reference page's golf table, with its row 7 moved to the top so that
 # first-appearance order gives C4.5's branch order (overcast first, true
 # before false). C4.5 takes that order from its .names file instead.
@@ -23,7 +23,7 @@ outlook = rain:
 |   windy = true: Don't Play (2.0)
 |   windy = false: Play (3.0)"""
 
-GIELDA_TREE = """\
+STOCK_MARKET_TREE = """\
 a1 = old: down (3.0)
 a1 = mid:
 |   a2 = yes: down (2.0)
@@ -31,22 +31,22 @@ a1 = mid:
 a1 = new: up (3.0)"""
 
 
-# The docs/assignment.md trees for testowaTabDec.txt, unpruned, in course mode
+# The docs/assignment.md trees for test_table.txt, unpruned, in course mode
 # (-m 1) and with the default -m 2, plus the empty branches spec R4.1 and R5.3
 # keep: a1 = 1 under a3 = 1 (-m 1) and a2 = 0 under a4 = 1 (-m 2).
 # test_cli.py checks `train --no-prune` against the same files.
-TESTOWA_M1_TREE = (DATA / "testowaTabDec-m1.tree.txt").read_text().rstrip("\n")
-TESTOWA_M2_TREE = (DATA / "testowaTabDec-m2.tree.txt").read_text().rstrip("\n")
+TEST_TABLE_M1_TREE = (DATA / "test_table-m1.tree.txt").read_text().rstrip("\n")
+TEST_TABLE_M2_TREE = (DATA / "test_table-m2.tree.txt").read_text().rstrip("\n")
 
 
 def tree_from(write_table, text, **options):
     return build_tree(load_table(write_table(text)), **options)
 
 
-def test_gielda_tree_matches_reference_page():
-    tree = build_tree(load_table(DATA / "gielda.txt"))
+def test_stock_market_tree_matches_reference_page():
+    tree = build_tree(load_table(DATA / "stock_market.txt"))
 
-    assert render_plain(tree) == GIELDA_TREE
+    assert render_plain(tree) == STOCK_MARKET_TREE
 
 
 def load_golf():
@@ -86,7 +86,7 @@ def test_continuous_attribute_is_reused_with_another_threshold(write_table):
 
 
 def test_every_node_and_leaf_stores_its_class_distribution():
-    tree = build_tree(load_table(DATA / "gielda.txt"))
+    tree = build_tree(load_table(DATA / "stock_market.txt"))
 
     assert isinstance(tree, Node)
     assert tree.distribution == {"down": 5.0, "up": 5.0}
@@ -134,15 +134,15 @@ def test_empty_branch_gets_parents_most_common_class(write_table):
 
 
 def test_min_cases_1_gives_the_course_mode_tree():
-    tree = build_tree(load_table(TESTOWA), min_cases=1)
+    tree = build_tree(load_table(TEST_TABLE), min_cases=1)
 
-    assert render_plain(tree) == TESTOWA_M1_TREE
+    assert render_plain(tree) == TEST_TABLE_M1_TREE
 
 
 def test_default_min_cases_2_blocks_tests_without_two_branches_of_2_cases():
-    tree = build_tree(load_table(TESTOWA))
+    tree = build_tree(load_table(TEST_TABLE))
 
-    assert render_plain(tree) == TESTOWA_M2_TREE
+    assert render_plain(tree) == TEST_TABLE_M2_TREE
 
 
 def test_min_cases_counts_cases_per_branch(write_table):
@@ -156,17 +156,17 @@ def test_min_cases_counts_cases_per_branch(write_table):
 
 
 def test_gain_criterion_picks_the_highest_gain():
-    # docs/assignment.md: a1 has the highest Gain (0.78) on testowaTabDec.
-    tree = build_tree(load_table(TESTOWA), criterion="gain")
+    # docs/assignment.md: a1 has the highest Gain (0.78) on test_table.
+    tree = build_tree(load_table(TEST_TABLE), criterion="gain")
 
     assert isinstance(tree, Node)
     assert tree.attribute == "a1"
 
 
 def test_quinlan_gain_filter_drops_tests_below_average_gain():
-    # docs/assignment.md, testowaTabDec: Gains 0.78, 0.56, 0.56, 0.41 average
+    # docs/assignment.md, test_table: Gains 0.78, 0.56, 0.56, 0.41 average
     # 0.58, so only a1 competes on Gain Ratio, though a3 has the best ratio.
-    tree = build_tree(load_table(TESTOWA), quinlan_gain_filter=True)
+    tree = build_tree(load_table(TEST_TABLE), quinlan_gain_filter=True)
 
     assert isinstance(tree, Node)
     assert tree.attribute == "a1"
@@ -228,7 +228,7 @@ def test_mirror_image_tests_tie_and_the_leftmost_wins(write_table):
 
 def test_unknown_criterion_is_rejected():
     with pytest.raises(ValueError, match="criterion"):
-        build_tree(load_table(TESTOWA), criterion="entropy")
+        build_tree(load_table(TEST_TABLE), criterion="entropy")
 
 
 # Quinlan, "C4.5: Programs for Machine Learning", §2.4: the golf tree when the

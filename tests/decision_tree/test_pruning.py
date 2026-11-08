@@ -73,8 +73,8 @@ def load_golf():
     return load_table(path, header=True, continuous=["temperature", "humidity"])
 
 
-def course_mode_testowa():
-    return build_tree(load_table(DATA / "testowaTabDec.txt"), min_cases=1)
+def course_mode_test_table():
+    return build_tree(load_table(DATA / "test_table.txt"), min_cases=1)
 
 
 def test_golf_keeps_8_nodes_and_0_errors_after_pruning():
@@ -89,10 +89,10 @@ def test_golf_keeps_8_nodes_and_0_errors_after_pruning():
     assert evaluate(pruned, table).errors == 0
 
 
-# testowaTabDec.txt in course mode (-m 1), pruned at 25%. By hand: the a4 = 1
+# test_table.txt in course mode (-m 1), pruned at 25%. By hand: the a4 = 1
 # subtree estimates 0.75 + 1.0 + 0.75 = 2.5 errors, a Leaf of 4 cases with
 # 1 error 2.19, so it becomes a Leaf. At 50% the subtree's 1.59 beats 1.71.
-TESTOWA_M1_PRUNED = """\
+TEST_TABLE_M1_PRUNED = """\
 a3 = 0:
 |   a4 = 1: 0 (4.0/1.0)
 |   a4 = 0: 1 (2.0)
@@ -103,16 +103,16 @@ a3 = 1:
 
 
 def test_course_mode_tree_prunes_its_a4_subtree_at_25_percent():
-    assert render_plain(prune(course_mode_testowa(), 0.25)) == TESTOWA_M1_PRUNED
+    assert render_plain(prune(course_mode_test_table(), 0.25)) == TEST_TABLE_M1_PRUNED
 
 
 @pytest.mark.parametrize(
     ("grow", "sizes"),
     [
-        (course_mode_testowa, {0.5: 11, 0.25: 8}),
+        (course_mode_test_table, {0.5: 11, 0.25: 8}),
         (lambda: build_tree(load_golf()), {0.25: 8, 0.05: 1}),
     ],
-    ids=["testowaTabDec -m 1", "golf"],
+    ids=["test_table -m 1", "golf"],
 )
 def test_lower_confidence_level_prunes_more(grow, sizes):
     tree = grow()
@@ -123,7 +123,7 @@ def test_lower_confidence_level_prunes_more(grow, sizes):
 def test_leaves_of_one_class_merge_even_at_100_percent():
     # Default -m 2: both a2 leaves predict 0, so the Leaf makes the same one
     # error and adds no estimate at 100%.
-    tree = build_tree(load_table(DATA / "testowaTabDec.txt"))
+    tree = build_tree(load_table(DATA / "test_table.txt"))
 
     pruned = prune(tree, 1.0)
 

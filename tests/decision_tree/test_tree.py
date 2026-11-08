@@ -10,8 +10,8 @@ DATA = Path(__file__).parent.parent / "data"
 
 
 @pytest.mark.parametrize("case", range(10))
-def test_each_gielda_case_gets_its_training_decision_with_probability_one(case):
-    table = load_table(DATA / "gielda.txt")
+def test_each_stock_market_case_gets_its_training_decision_with_probability_one(case):
+    table = load_table(DATA / "stock_market.txt")
     tree = build_tree(table)
 
     distribution = classify(tree, table.cases[case])

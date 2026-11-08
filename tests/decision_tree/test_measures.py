@@ -16,11 +16,11 @@ from decision_tree.table import DecisionTable, load_table
 
 DATA = Path(__file__).parent.parent / "data"
 
-# Class counts (down, up) per branch on gielda.txt, from the course script table 1.1.
-GIELDA = (5, 5)
-GIELDA_A1 = ((3, 0), (2, 2), (0, 3))  # old, mid, new
-GIELDA_A2 = ((3, 1), (2, 4))  # yes, no
-GIELDA_A3 = ((3, 3), (2, 2))  # swr, hwr
+# Class counts (down, up) per branch on stock_market.txt (course script table 1.1).
+STOCK_MARKET = (5, 5)
+STOCK_MARKET_A1 = ((3, 0), (2, 2), (0, 3))  # old, mid, new
+STOCK_MARKET_A2 = ((3, 1), (2, 4))  # yes, no
+STOCK_MARKET_A3 = ((3, 3), (2, 2))  # swr, hwr
 
 
 @pytest.mark.parametrize(
@@ -40,8 +40,8 @@ def test_entropy_matches_course_script(probabilities, expected):
     assert entropy(probabilities) == expected
 
 
-def test_info_of_gielda_is_one():
-    assert info(GIELDA) == pytest.approx(1.0)
+def test_info_of_stock_market_is_one():
+    assert info(STOCK_MARKET) == pytest.approx(1.0)
 
 
 def test_info_of_a_pure_set_is_zero():
@@ -54,42 +54,50 @@ def test_info_takes_fractional_weights():
 
 @pytest.mark.parametrize(
     ("partition", "expected"),
-    [(GIELDA_A1, 0.4), (GIELDA_A2, 0.8754887502163469), (GIELDA_A3, 1.0)],
+    [
+        (STOCK_MARKET_A1, 0.4),
+        (STOCK_MARKET_A2, 0.8754887502163469),
+        (STOCK_MARKET_A3, 1.0),
+    ],
 )
-def test_info_split_on_gielda(partition, expected):
+def test_info_split_on_stock_market(partition, expected):
     assert info_split(partition) == pytest.approx(expected)
 
 
 @pytest.mark.parametrize(
     ("partition", "expected"),
-    [(GIELDA_A1, 0.6), (GIELDA_A2, 0.12451124978365313), (GIELDA_A3, 0.0)],
+    [
+        (STOCK_MARKET_A1, 0.6),
+        (STOCK_MARKET_A2, 0.12451124978365313),
+        (STOCK_MARKET_A3, 0.0),
+    ],
 )
-def test_gain_on_gielda(partition, expected):
-    assert gain(GIELDA, partition) == pytest.approx(expected, abs=1e-12)
+def test_gain_on_stock_market(partition, expected):
+    assert gain(STOCK_MARKET, partition) == pytest.approx(expected, abs=1e-12)
 
 
 @pytest.mark.parametrize(
     ("partition", "expected"),
     [
-        (GIELDA_A1, 1.5709505944546684),
-        (GIELDA_A2, 0.9709505944546686),
-        (GIELDA_A3, 0.9709505944546686),
+        (STOCK_MARKET_A1, 1.5709505944546684),
+        (STOCK_MARKET_A2, 0.9709505944546686),
+        (STOCK_MARKET_A3, 0.9709505944546686),
     ],
 )
-def test_split_info_on_gielda(partition, expected):
+def test_split_info_on_stock_market(partition, expected):
     assert split_info(partition) == pytest.approx(expected)
 
 
 @pytest.mark.parametrize(
     ("partition", "expected"),
     [
-        (GIELDA_A1, 0.3819343537078458),
-        (GIELDA_A2, 0.12823644219877584),
-        (GIELDA_A3, 0.0),
+        (STOCK_MARKET_A1, 0.3819343537078458),
+        (STOCK_MARKET_A2, 0.12823644219877584),
+        (STOCK_MARKET_A3, 0.0),
     ],
 )
-def test_gain_ratio_on_gielda(partition, expected):
-    assert gain_ratio(GIELDA, partition) == pytest.approx(expected, abs=1e-12)
+def test_gain_ratio_on_stock_market(partition, expected):
+    assert gain_ratio(STOCK_MARKET, partition) == pytest.approx(expected, abs=1e-12)
 
 
 def test_gain_ratio_is_zero_when_all_cases_fall_in_one_branch():
@@ -118,21 +126,21 @@ def test_gain_ratio_with_missing_values():
     )
 
 
-# testowaTabDec.txt (script table 1.2). The partitions are counted from the file,
+# test_table.txt (script table 1.2). The partitions are counted from the file,
 # so these tests check the loader and the measures together.
 @cache
-def load_testowa() -> DecisionTable:
-    return load_table(DATA / "testowaTabDec.txt")
+def load_test_table() -> DecisionTable:
+    return load_table(DATA / "test_table.txt")
 
 
-def class_counts_of_testowa() -> list[int]:
-    table = load_testowa()
+def class_counts_of_test_table() -> list[int]:
+    table = load_test_table()
     return [table.decisions.count(c) for c in table.classes]
 
 
-def partition_on_testowa(attribute: str) -> list[list[int]]:
+def partition_on_test_table(attribute: str) -> list[list[int]]:
     """Class counts per value of `attribute`, values in file order."""
-    table = load_testowa()
+    table = load_test_table()
     column = table.attributes.index(attribute)
     branches = Counter(
         (case[column], decision)
@@ -150,8 +158,8 @@ def _split_info(_counts, partition):
     return split_info(partition)
 
 
-# docs/assignment.md, testowaTabDec.txt table, one row per measure.
-TESTOWA_MEASURES = {
+# docs/assignment.md, test_table.txt table, one row per measure.
+TEST_TABLE_MEASURES = {
     "Info(X,T)": (
         _info_split,
         {
@@ -191,32 +199,32 @@ TESTOWA_MEASURES = {
 }
 
 
-def test_info_of_testowatabdec():
-    assert info(class_counts_of_testowa()) == pytest.approx(1.5304930567574824)
+def test_info_of_test_table():
+    assert info(class_counts_of_test_table()) == pytest.approx(1.5304930567574824)
 
 
 @pytest.mark.parametrize(
     ("measure", "attribute", "expected"),
     [
         (name, attribute, expected)
-        for name, (_, values) in TESTOWA_MEASURES.items()
+        for name, (_, values) in TEST_TABLE_MEASURES.items()
         for attribute, expected in values.items()
     ],
 )
-def test_measures_on_testowatabdec_match_the_script(measure, attribute, expected):
-    compute = TESTOWA_MEASURES[measure][0]
-    partition = partition_on_testowa(attribute)
+def test_measures_on_test_table_match_the_script(measure, attribute, expected):
+    compute = TEST_TABLE_MEASURES[measure][0]
+    partition = partition_on_test_table(attribute)
 
-    assert compute(class_counts_of_testowa(), partition) == pytest.approx(expected)
+    assert compute(class_counts_of_test_table(), partition) == pytest.approx(expected)
 
 
 def test_a3_beats_a2_on_gain_ratio_though_they_tie_on_gain():
     # Script §5: a3 wins because it has fewer values.
-    counts = class_counts_of_testowa()
-    a2, a3 = partition_on_testowa("a2"), partition_on_testowa("a3")
+    counts = class_counts_of_test_table()
+    a2, a3 = partition_on_test_table("a2"), partition_on_test_table("a3")
     ratios = {
-        a: gain_ratio(counts, partition_on_testowa(a))
-        for a in load_testowa().attributes
+        a: gain_ratio(counts, partition_on_test_table(a))
+        for a in load_test_table().attributes
     }
 
     assert gain(counts, a2) == pytest.approx(gain(counts, a3))
