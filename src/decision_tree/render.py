@@ -1,5 +1,6 @@
-"""Plain C4.5-style text for a tree (spec R9)."""
+"""Plain text: C4.5-style trees (spec R9) and table statistics (spec R2)."""
 
+from decision_tree.stats import AttributeStats, TableStats
 from decision_tree.tree import Leaf, Node, Tree
 
 
@@ -38,3 +39,39 @@ def _render_node(node: Node, depth: int, lines: list[str]) -> None:
         else:
             lines.append(f"{indent}{branch_text(node, value)}:")
             _render_node(child, depth + 1, lines)
+
+
+def render_stats_plain(stats: TableStats) -> str:
+    """One block per attribute, then the Decision Attribute; no final newline."""
+    blocks = [
+        _counts_block(attribute_heading(attribute), attribute.counts)
+        for attribute in stats.attributes
+    ]
+    blocks.append(_counts_block(decision_heading(stats), stats.class_counts))
+    return "\n\n".join(blocks)
+
+
+def attribute_heading(attribute: AttributeStats) -> str:
+    """e.g. `a1 (discrete): 3 values, 0 missing`."""
+    values = _plural(attribute.distinct, "value", "values")
+    return f"{attribute.name} ({attribute.kind}): {values}, {attribute.missing} missing"
+
+
+def decision_heading(stats: TableStats) -> str:
+    """e.g. `d (decision): 2 classes`."""
+    classes = _plural(len(stats.class_counts), "class", "classes")
+    return f"{stats.decision} (decision): {classes}"
+
+
+def _counts_block(heading: str, counts: dict[str, int]) -> str:
+    value_width = max(map(len, counts))
+    count_width = max(len(str(count)) for count in counts.values())
+    lines = [
+        f"  {value.ljust(value_width)}  {str(count).rjust(count_width)}"
+        for value, count in counts.items()
+    ]
+    return "\n".join([heading, *lines])
+
+
+def _plural(count: int, singular: str, plural: str) -> str:
+    return f"{count} {singular if count == 1 else plural}"
