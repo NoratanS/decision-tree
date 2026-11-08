@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from decision_tree.cli import app
@@ -164,7 +165,10 @@ def test_override_lists_are_comma_separated(write_table):
 
 
 def test_train_takes_loading_options(write_table):
-    result = runner.invoke(app, ["train", str(write_table(GOLF)), "--header"])
+    # -m 1: the 2 : 1 split would be blocked by the default -m 2.
+    result = runner.invoke(
+        app, ["train", str(write_table(GOLF)), "--header", "-m", "1"]
+    )
 
     assert result.exit_code == 0, result.output
     assert result.stdout == "outlook = słońce: nie (2.0)\noutlook = deszcz: tak (1.0)\n"
@@ -178,3 +182,50 @@ def test_unknown_override_column_gives_one_line_error(write_table):
     assert result.exit_code == 1
     assert result.stderr.strip().count("\n") == 0
     assert "unknown column 'wind'" in result.stderr
+
+
+TESTOWA = str(DATA / "testowaTabDec.txt")
+
+
+def test_train_default_uses_gain_ratio_and_m_2():
+    result = runner.invoke(app, ["train", TESTOWA])
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout.startswith("a3 = 0:\n|   a4 = 1:\n|   |   a2 = 1:")
+
+
+def test_train_m_option_sets_the_minimum_branch_size():
+    result = runner.invoke(app, ["train", TESTOWA, "-m", "1"])
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout.startswith("a3 = 0:\n|   a4 = 1:\n|   |   a1 = 0:")
+
+
+def test_train_criterion_gain_ranks_tests_by_gain():
+    result = runner.invoke(app, ["train", TESTOWA, "--criterion", "gain"])
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout.startswith("a1 = ")
+
+
+def test_train_criterion_gain_ratio_can_be_named():
+    result = runner.invoke(app, ["train", TESTOWA, "--criterion", "gain-ratio"])
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout.startswith("a3 = ")
+
+
+def test_train_quinlan_gain_filter_changes_the_root():
+    result = runner.invoke(app, ["train", TESTOWA, "--quinlan-gain-filter"])
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout.startswith("a1 = ")
+
+
+@pytest.mark.parametrize(
+    "option", [["--criterion", "entropy"], ["-m", "0"], ["-m", "two"]]
+)
+def test_train_rejects_bad_split_options(option):
+    result = runner.invoke(app, ["train", TESTOWA, *option])
+
+    assert result.exit_code == 2

@@ -11,7 +11,7 @@ from rich.markup import escape
 from rich.table import Table
 from rich.tree import Tree as RichTree
 
-from decision_tree.builder import build_tree
+from decision_tree.builder import Criterion, build_tree
 from decision_tree.render import (
     attribute_heading,
     branch_text,
@@ -67,6 +67,9 @@ Continuous = Annotated[
 ]
 
 
+_SPLITTING = "Split options"
+
+
 @app.callback()
 def _commands() -> None:
     """Learn C4.5 decision trees from decision tables."""
@@ -83,8 +86,34 @@ def train(
     encoding: Encoding = "utf-8",
     discrete: Discrete = "",
     continuous: Continuous = "",
+    criterion: Annotated[
+        Criterion,
+        typer.Option(
+            "--criterion",
+            help="Rank tests by gain (ID3) or gain-ratio (C4.5).",
+            rich_help_panel=_SPLITTING,
+        ),
+    ] = "gain-ratio",
+    quinlan_gain_filter: Annotated[
+        bool,
+        typer.Option(
+            "--quinlan-gain-filter",
+            help="Only tests with at least the average Gain compete.",
+            rich_help_panel=_SPLITTING,
+        ),
+    ] = False,
+    min_cases: Annotated[
+        int,
+        typer.Option(
+            "-m",
+            "--min-cases",
+            min=1,
+            help="A test needs two branches with at least this many cases.",
+            rich_help_panel=_SPLITTING,
+        ),
+    ] = 2,
 ) -> None:
-    """Build a C4.5 tree with Gain Ratio and print it."""
+    """Build a C4.5 tree and print it."""
     out = Console()
     tree = build_tree(
         _load(
@@ -94,7 +123,10 @@ def train(
             encoding=encoding,
             discrete=discrete,
             continuous=continuous,
-        )
+        ),
+        criterion=criterion,
+        quinlan_gain_filter=quinlan_gain_filter,
+        min_cases=min_cases,
     )
     if plain or not out.is_terminal:
         _print_plain(out, render_plain(tree))
