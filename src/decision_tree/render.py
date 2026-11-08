@@ -1,9 +1,15 @@
 """Plain text: C4.5-style trees (spec R9), table statistics (spec R2),
-evaluations (spec R8) and classified Cases (spec R10)."""
+evaluations and set names (spec R8) and classified Cases (spec R10)."""
 
 from collections.abc import Sequence
 
 from decision_tree.evaluate import Classification, Evaluation
+from decision_tree.experiment import (
+    EvaluatedSet,
+    FileTestSet,
+    HoldOutTestSet,
+    TrainingSet,
+)
 from decision_tree.stats import AttributeStats, TableStats
 from decision_tree.tree import ClassDistribution, Leaf, Node, Tree, size
 
@@ -134,6 +140,17 @@ def _plural(count: int, singular: str, plural: str) -> str:
 
 CONFUSION_CORNER = "actual \\ predicted"
 """Heading of the first column of a confusion matrix."""
+
+
+def set_name(evaluated_set: EvaluatedSet) -> str:
+    """`Training Set`, `Test Set (FILE)` or `Test Set (hold-out, --seed N)`."""
+    match evaluated_set:
+        case TrainingSet():
+            return "Training Set"
+        case FileTestSet(file):
+            return f"Test Set ({file})"
+        case HoldOutTestSet(seed):
+            return f"Test Set (hold-out, --seed {seed})"
 
 
 def evaluation_heading(set_name: str, result: Evaluation) -> str:

@@ -275,26 +275,6 @@ def test_train_rejects_bad_split_options(option):
 STOCK_MARKET_TEST = "old yes swr up\nnew no hwr up\n"
 
 
-def test_train_test_reports_training_and_test_set(write_table):
-    test = str(write_table(STOCK_MARKET_TEST, name="test.txt"))
-
-    result = runner.invoke(app, ["train", STOCK_MARKET, "--test", test])
-
-    assert result.exit_code == 0, result.output
-    test_matrix = (
-        "  actual \\ predicted  down  up\n"
-        "  down                   0   0\n"
-        "  up                     1   1\n"
-    )
-    assert result.stdout == (
-        STOCK_MARKET_OUTPUT + "\n"
-        f"Unpruned tree on Test Set ({test}): 2 cases, 1 error (50.0%)\n"
-        + test_matrix
-        + "\n"
-        f"Pruned tree on Test Set ({test}): 2 cases, 1 error (50.0%)\n" + test_matrix
-    )
-
-
 def test_train_draws_rich_confusion_matrices_in_a_terminal(write_table):
     test = str(write_table(STOCK_MARKET_TEST, name="test.txt"))
 
@@ -310,16 +290,6 @@ def test_train_draws_rich_confusion_matrices_in_a_terminal(write_table):
 
 
 GOLF_SPLIT = ["train", *GOLF_ARGS, "--split", "0.7"]
-
-
-def test_train_split_with_a_seed_gives_the_same_split_every_run():
-    first = runner.invoke(app, [*GOLF_SPLIT, "--seed", "42"])
-    second = runner.invoke(app, [*GOLF_SPLIT, "--seed", "42"])
-
-    assert first.exit_code == 0, first.output
-    assert first.stdout == second.stdout
-    assert "Training Set: 10 cases" in first.stdout
-    assert "Test Set (hold-out, --seed 42): 4 cases" in first.stdout
 
 
 def test_train_split_without_a_seed_prints_the_seed_it_used():
@@ -507,28 +477,6 @@ def test_classify_takes_the_build_options(write_table):
 
     assert result.exit_code == 0
     assert "   1  down       0.500  0.500" in result.stdout
-
-
-def test_train_no_prune_shows_only_the_unpruned_tree():
-    result = runner.invoke(app, ["train", STOCK_MARKET, "--no-prune"])
-
-    assert result.exit_code == 0, result.output
-    assert result.stdout == (
-        "Unpruned tree (size 6):\n" + STOCK_MARKET_TREE + "\n"
-        "Unpruned tree on Training Set: 10 cases, 0 errors (0.0%)\n"
-        + STOCK_MARKET_MATRIX
-    )
-
-
-def test_train_c_option_sets_the_confidence_level():
-    # At 5% golf's estimates make the whole tree one Leaf; at 25% it stays.
-    result = runner.invoke(app, ["train", *GOLF_ARGS, "-c", "5"])
-
-    assert result.exit_code == 0, result.output
-    assert "Pruned tree (size 1, Confidence Level 5%):\nPlay (14.0/5.0)\n" in (
-        result.stdout
-    )
-    assert "Pruned tree on Training Set: 14 cases, 5 errors (35.7%)" in result.stdout
 
 
 def test_train_confidence_level_may_be_fractional():

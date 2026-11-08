@@ -1,7 +1,6 @@
 """Error count, error rate and confusion matrix of a tree on a table (spec R8),
 and the classified Cases of the `classify` command (spec R10)."""
 
-import random
 from dataclasses import dataclass
 from functools import cached_property
 
@@ -82,23 +81,3 @@ def classify_cases(tree: Tree, cases: Cases) -> Classification:
         distributions=tuple(classify(tree, case) for case in cases.cases),
         decisions=cases.decisions,
     )
-
-
-def hold_out(
-    table: DecisionTable, ratio: float, *, seed: int
-) -> tuple[DecisionTable, DecisionTable]:
-    """Split `table` at random into a Training Set and a Test Set.
-
-    `ratio` of the Cases (rounded) go to the Training Set, the rest to the Test
-    Set. The same `seed` gives the same split. Both parts keep the file order,
-    names and attribute types. Raises ValueError if a part would be empty.
-    """
-    count = len(table.cases)
-    size = round(ratio * count)
-    if not 0 < size < count:
-        empty = "Training Set" if size <= 0 else "Test Set"
-        raise ValueError(f"a {ratio:g} split of {count} cases leaves no {empty}")
-    chosen = set(random.Random(seed).sample(range(count), size))
-    training = [i for i in range(count) if i in chosen]
-    test = [i for i in range(count) if i not in chosen]
-    return table.subset(training), table.subset(test)

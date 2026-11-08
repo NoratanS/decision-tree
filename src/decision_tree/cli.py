@@ -3,7 +3,6 @@
 The only module allowed to import Typer and Rich (ADR 0003).
 """
 
-import random
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Annotated, NoReturn
@@ -15,14 +14,15 @@ from rich.table import Table
 from rich.tree import Tree as RichTree
 
 from decision_tree.builder import Criterion, build_tree
-from decision_tree.evaluate import (
-    Classification,
-    Evaluation,
-    classify_cases,
-    evaluate,
-    hold_out,
+from decision_tree.evaluate import Classification, Evaluation, classify_cases
+from decision_tree.experiment import (
+    FileSource,
+    HoldOut,
+    SplitError,
+    TestSource,
+    run_experiment,
 )
-from decision_tree.pruning import DEFAULT_CONFIDENCE, prune
+from decision_tree.pruning import DEFAULT_CONFIDENCE
 from decision_tree.render import (
     CONFUSION_CORNER,
     accuracy_text,
@@ -36,6 +36,7 @@ from decision_tree.render import (
     render_evaluation_plain,
     render_plain,
     render_stats_plain,
+    set_name,
     tree_heading,
     tree_name,
 )
@@ -210,36 +211,30 @@ def train(
     if seed is not None and split is None:
         _fail("--seed needs --split")
     out = Console()
+    source: TestSource = None
     with _table_errors():
         options = _read_options(header, sep, encoding, missing)
         training = _load_training(file, options, discrete, continuous)
-        tests: list[tuple[str, DecisionTable]] = (
-            []
-            if test is None
-            else [(f"Test Set ({test})", load_table(test, options, like=training))]
-        )
+        if test is not None:
+            source = FileSource(test, load_table(test, options, like=training))
     if split is not None:
-        if seed is None:
-            seed = random.randrange(2**32)
-        try:
-            training, held_out = hold_out(training, split, seed=seed)
-        except ValueError as error:
-            _fail(f"--split: {error}")
-        tests.append((f"Test Set (hold-out, --seed {seed})", held_out))
+        source = HoldOut(split, seed)
+    try:
+        result = run_experiment(
+            training,
+            source,
+            criterion=criterion,
+            quinlan_gain_filter=quinlan_gain_filter,
+            min_cases=min_cases,
+            confidence=None if no_prune else confidence / 100,
+        )
+    except SplitError as error:
+        _fail(f"--split: {error}")
 
-    unpruned = build_tree(
-        training,
-        criterion=criterion,
-        quinlan_gain_filter=quinlan_gain_filter,
-        min_cases=min_cases,
-    )
-    # (Confidence Level in percent or None, tree)
-    trees: list[tuple[float | None, Tree]] = [(None, unpruned)]
-    if not no_prune:
-        trees.append((confidence, prune(unpruned, confidence / 100)))
-
+    # Confidence Level in percent of each tree in `result.trees`; None: unpruned.
+    levels = (None, confidence)
     terminal = not plain and out.is_terminal
-    for pruned_at, tree in trees:
+    for pruned_at, tree in zip(levels, result.trees, strict=False):
         if pruned_at is not None:
             out.print()
         heading = tree_heading(tree, pruned_at=pruned_at)
@@ -248,11 +243,13 @@ def train(
         else:
             _print_plain(out, f"{heading}:\n{render_plain(tree)}")
     print_evaluation = _print_rich_evaluation if terminal else _print_plain_evaluation
-    for set_name, table in [("Training Set", training), *tests]:
-        for pruned_at, tree in trees:
+    for on_set in result.evaluations:
+        for pruned_at, evaluation in zip(levels, on_set.by_tree, strict=False):
             name = tree_name(pruned=pruned_at is not None)
             out.print()
-            print_evaluation(out, f"{name} on {set_name}", evaluate(tree, table))
+            print_evaluation(
+                out, f"{name} on {set_name(on_set.evaluated_set)}", evaluation
+            )
 
 
 @app.command()

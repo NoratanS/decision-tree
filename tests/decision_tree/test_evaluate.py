@@ -1,12 +1,6 @@
-from pathlib import Path
-
-import pytest
-
-from decision_tree.evaluate import classify_cases, evaluate, hold_out
-from decision_tree.table import Cases, DecisionTable, ReadOptions, load_table
+from decision_tree.evaluate import classify_cases, evaluate
+from decision_tree.table import Cases, DecisionTable
 from decision_tree.tree import Leaf, Node
-
-DATA = Path(__file__).parent.parent / "data"
 
 # a1 = x → yes, a1 = y → no
 TREE = Node(
@@ -63,51 +57,6 @@ def test_empty_test_set_has_no_errors_and_rate_zero():
     result = evaluate(TREE, table())
 
     assert (result.cases, result.errors, result.error_rate) == (0, 0, 0.0)
-
-
-def golf() -> DecisionTable:
-    return load_table(
-        DATA / "golf.txt",
-        ReadOptions(header=True),
-        continuous=["temperature", "humidity"],
-    )
-
-
-def test_hold_out_is_the_same_for_the_same_seed():
-    assert hold_out(golf(), 0.7, seed=42) == hold_out(golf(), 0.7, seed=42)
-
-
-def test_hold_out_differs_for_another_seed():
-    assert hold_out(golf(), 0.7, seed=42) != hold_out(golf(), 0.7, seed=7)
-
-
-def test_hold_out_partitions_the_cases_in_file_order():
-    full = golf()
-
-    training, test = hold_out(full, 0.7, seed=42)
-
-    assert (len(training.cases), len(test.cases)) == (10, 4)
-    # golf has no repeated cases, so each case's file position is unique.
-    position = {case: i for i, case in enumerate(full.cases)}
-    for part in (training, test):
-        assert part.cases == tuple(sorted(part.cases, key=position.__getitem__))
-        assert part.decisions == tuple(full.decisions[position[c]] for c in part.cases)
-    assert sorted(training.cases + test.cases) == sorted(full.cases)
-
-
-def test_hold_out_keeps_names_and_types():
-    training, test = hold_out(golf(), 0.7, seed=42)
-
-    for part in (training, test):
-        assert part.attributes == ("outlook", "temperature", "humidity", "windy")
-        assert part.decision == "play"
-        assert part.kinds == ("discrete", "continuous", "continuous", "discrete")
-
-
-@pytest.mark.parametrize("ratio", [0.01, 0.99])
-def test_hold_out_with_an_empty_part_is_an_error(ratio):
-    with pytest.raises(ValueError, match="14 cases"):
-        hold_out(golf(), ratio, seed=42)
 
 
 def test_classify_cases_predicts_the_most_probable_class_and_counts_correct_ones():

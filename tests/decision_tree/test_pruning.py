@@ -135,6 +135,13 @@ def test_leaves_of_one_class_merge_even_at_100_percent():
 
 
 @pytest.mark.parametrize("confidence", [0.0, -0.1, 1.5])
-def test_confidence_level_outside_0_1_is_rejected(confidence):
+@pytest.mark.parametrize("tree", [_book_subtree(), Leaf("no", {"yes": 0.0, "no": 1.0})])
+def test_confidence_level_outside_0_1_is_rejected(tree, confidence):
     with pytest.raises(ValueError, match="confidence"):
-        prune(_book_subtree(), confidence)
+        prune(tree, confidence)
+
+
+@pytest.mark.parametrize("confidence", [0.0, 1.5])
+def test_estimate_rejects_a_confidence_level_outside_0_1(confidence):
+    with pytest.raises(ValueError, match="confidence"):
+        estimated_errors(4, 1, confidence=confidence)

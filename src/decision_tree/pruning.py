@@ -27,21 +27,23 @@ def prune(tree: Tree, confidence: float = DEFAULT_CONFIDENCE) -> Tree:
     most common Decision Class when that Leaf's estimated errors are no higher
     than the summed estimates of the branches. A lower `confidence` (the
     Confidence Level, in (0, 1]) gives higher estimates and prunes more.
+    Raises ValueError for a `confidence` outside (0, 1].
     """
+    _check_confidence(confidence)
     return _prune(tree, confidence)[0]
 
 
 def _prune(tree: Tree, confidence: float) -> tuple[Tree, float]:
     """The pruned subtree and its estimated errors."""
     if isinstance(tree, Leaf):
-        return tree, estimated_errors(tree.total, tree.errors, confidence=confidence)
+        return tree, _estimated_errors(tree.total, tree.errors, confidence)
     branches: dict[str, Tree] = {}
     subtree_errors = 0.0
     for value, child in tree.branches.items():
         branches[value], child_errors = _prune(child, confidence)
         subtree_errors += child_errors
     leaf = Leaf(majority(tree.distribution), tree.distribution)
-    leaf_errors = estimated_errors(leaf.total, leaf.errors, confidence=confidence)
+    leaf_errors = _estimated_errors(leaf.total, leaf.errors, confidence)
     if leaf_errors <= subtree_errors + EPSILON:
         return leaf, leaf_errors
     return Node(
@@ -59,8 +61,17 @@ def estimated_errors(weight: float, errors: float, *, confidence: float) -> floa
 
     `confidence` is the Confidence Level, between 0 (exclusive) and 1.
     """
+    _check_confidence(confidence)
+    return _estimated_errors(weight, errors, confidence)
+
+
+def _check_confidence(confidence: float) -> None:
     if not 0 < confidence <= 1:
         raise ValueError(f"confidence must be in (0, 1], got {confidence}")
+
+
+def _estimated_errors(weight: float, errors: float, confidence: float) -> float:
+    """`estimated_errors` without the range check."""
     if weight <= 0:
         return 0.0
     return errors + _added_errors(weight, errors, confidence)

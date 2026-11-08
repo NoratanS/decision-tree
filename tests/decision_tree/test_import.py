@@ -18,6 +18,7 @@ def test_public_api_is_exported():
         load_cases,
         load_table,
         prune,
+        run_experiment,
     )
 
     exported = (
@@ -28,6 +29,7 @@ def test_public_api_is_exported():
         prune,
         classify,
         evaluate,
+        run_experiment,
     )
     for name in exported:
         assert callable(name)

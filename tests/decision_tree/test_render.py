@@ -1,7 +1,8 @@
 import pytest
 
 from decision_tree.evaluate import Classification
-from decision_tree.render import render_classification_plain, render_plain
+from decision_tree.experiment import FileTestSet, HoldOutTestSet, TrainingSet
+from decision_tree.render import render_classification_plain, render_plain, set_name
 from decision_tree.tree import Leaf, Node
 
 
@@ -108,3 +109,15 @@ def test_classification_with_decisions_marks_wrong_predictions_and_gives_accurac
         "\n"
         "Accuracy: 2 of 3 cases (66.7%)"
     )
+
+
+@pytest.mark.parametrize(
+    ("evaluated_set", "name"),
+    [
+        (TrainingSet(), "Training Set"),
+        (FileTestSet("data/test.txt"), "Test Set (data/test.txt)"),
+        (HoldOutTestSet(seed=42), "Test Set (hold-out, --seed 42)"),
+    ],
+)
+def test_set_name_describes_where_the_set_comes_from(evaluated_set, name):
+    assert set_name(evaluated_set) == name
