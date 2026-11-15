@@ -6,12 +6,12 @@ unless one is given. Unless the separator is `,`, `1,5` is the number `1.5`.
 """
 
 import codecs
-import math
 import os
 import re
 from collections import Counter
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, replace
+from decimal import Decimal
 from functools import cached_property
 from typing import Literal
 
@@ -21,6 +21,10 @@ type Value = str | None
 
 MISSING_MARKERS = ("?", "NA", "")
 """Cells read as a Missing Value by default; `""` is the empty cell."""
+
+MAX_DISCRETE_WHOLE_NUMBERS = 10
+"""A column of whole numbers with more distinct known values than this is
+inferred continuous (ADR 0004)."""
 
 _WHITESPACE = None
 """Separator meaning "runs of spaces and tabs"."""
@@ -135,7 +139,7 @@ def load_table(
 ) -> DecisionTable:
     """Read a Decision Table as `options` say. A missing decision is an error.
 
-    Attribute types are inferred (ADR 0001); `discrete` and `continuous` name
+    Attribute types are inferred (ADR 0001, 0004); `discrete` and `continuous` name
     columns whose type is forced instead, never columns `options` ignore.
 
     With `like` (e.g. the Training Set, when reading a Test Set) the file must
@@ -245,7 +249,7 @@ def _load(
 
 @dataclass(frozen=True)
 class _Inferred:
-    """Columns named by the file; types inferred (ADR 0001) unless forced."""
+    """Columns named by the file; types inferred (ADR 0001, 0004) unless forced."""
 
     discrete: tuple[str, ...]
     continuous: tuple[str, ...]
@@ -650,17 +654,18 @@ def _number(value: str, *, decimal_comma: bool) -> str | None:
 
 def _infer_kind(values: tuple[Value, ...], *, decimal_comma: bool) -> Kind:
     """Continuous only if every known value is a number and one has a fraction
-    (ADR 0001)."""
+    (ADR 0001), or they are whole numbers with more than
+    MAX_DISCRETE_WHOLE_NUMBERS distinct values (ADR 0004)."""
     known = [_number(v, decimal_comma=decimal_comma) for v in values if v is not None]
-    numbers = [v for v in known if v is not None]
-    if len(numbers) == len(known) and any(map(_fractional, numbers)):
+    # Decimal is exact: 1e400 stays whole and 2**53 + 1 stays apart from 2**53.
+    numbers = [Decimal(v) for v in known if v is not None]
+    if len(numbers) < len(known):
+        return "discrete"
+    if any(n != n.to_integral_value() for n in numbers):
+        return "continuous"
+    if len(set(numbers)) > MAX_DISCRETE_WHOLE_NUMBERS:
         return "continuous"
     return "discrete"
-
-
-def _fractional(value: str) -> bool:
-    number = float(value)
-    return math.isfinite(number) and not number.is_integer()
 
 
 def _check_header(name: str, line: int, names: list[str]) -> None:

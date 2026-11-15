@@ -262,6 +262,62 @@ def test_text_and_whole_numbers_are_discrete_fractions_are_continuous(write_tabl
     )
 
 
+def test_whole_numbers_with_more_than_10_distinct_values_are_continuous(write_table):
+    # a1 holds 11 distinct whole numbers, a2 only 10 (ADR 0004).
+    rows = "".join(f"{i} {min(i, 9)} yes\n" for i in range(11))
+    path = write_table(rows)
+
+    assert load_table(path).kinds == ("continuous", "discrete")
+
+
+def test_discrete_override_keeps_many_whole_numbers_discrete(write_table):
+    path = write_table("".join(f"{i} yes\n" for i in range(11)))
+
+    assert load_table(path, discrete=["a1"]).kinds == ("discrete",)
+
+
+def test_missing_values_do_not_count_as_distinct_whole_numbers(write_table):
+    rows = "".join(f"{i} yes\n" for i in range(10)) + "? no\nNA yes\n"
+    path = write_table(rows)
+
+    assert load_table(path).kinds == ("discrete",)
+
+
+def test_whole_numbers_beyond_float_precision_count_as_distinct(write_table):
+    # 2**53 + i are 11 different whole numbers that a float cannot tell apart.
+    rows = "".join(f"{2**53 + i} yes\n" for i in range(11))
+    path = write_table(rows)
+
+    assert load_table(path).kinds == ("continuous",)
+
+
+def test_whole_number_too_large_for_a_float_is_still_whole(write_table):
+    # 1e400 overflows a float but is a whole number: 12 distinct values.
+    rows = "".join(f"{i} yes\n" for i in range(11)) + "1e400 no\n"
+    path = write_table(rows)
+
+    assert load_table(path).kinds == ("continuous",)
+
+
+def test_table_read_like_another_keeps_its_inferred_whole_number_types(write_table):
+    training = load_table(write_table("".join(f"{i} yes\n" for i in range(11))))
+    test_path = write_table("1 yes\n2 no\n", name="test.txt")
+
+    assert load_table(test_path, like=training).kinds == ("continuous",)
+
+
+def test_golf_temperature_is_continuous_humidity_discrete_without_overrides():
+    # temperature has 12 distinct values, humidity 9.
+    table = load_table(DATA / "golf.txt", ReadOptions(header=True))
+
+    assert dict(zip(table.attributes, table.kinds, strict=True)) == {
+        "outlook": "discrete",
+        "temperature": "continuous",
+        "humidity": "discrete",
+        "windy": "discrete",
+    }
+
+
 def test_whole_number_written_with_a_point_stays_discrete(write_table):
     path = write_table("1.0 yes\n2.00 no\n3e2 yes\n")
 

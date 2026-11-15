@@ -21,9 +21,9 @@ Raw UCI files live in `benchmarks/data/raw/`. Each raw file is rewritten into a
 temporary directory with the decision last and ID columns dropped: the loader
 has no option to drop columns (ticket 35), and a decision-last copy keeps one
 read path for every dataset, though `--decision` (ticket 31) now reads a
-class-first file directly. Integer columns
-are read as discrete by default (ADR 0001, ticket 32), so each dataset names its
-numeric columns as continuous.
+class-first file directly. Each dataset still names its numeric columns as
+continuous, though since ADR 0004 a whole-number column with more than 10
+distinct values is inferred continuous anyway.
 
 Standard library and `decision_tree` only (CLAUDE.md ground rules).
 """
