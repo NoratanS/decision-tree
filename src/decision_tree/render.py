@@ -327,7 +327,7 @@ def classification_blocks(result: Classification) -> list[TableBlock]:
                 Cell("") if correct else Cell("wrong", "wrong"),
             )
         )
-    footer = _accuracy_text(result) if with_decisions else None
+    footer = None if result.evaluation is None else _accuracy_text(result.evaluation)
     return [TableBlock(None, tuple(columns), tuple(rows), footer=footer)]
 
 
@@ -336,11 +336,10 @@ def render_classification_plain(result: Classification) -> str:
     return render_blocks_plain(classification_blocks(result))
 
 
-def _accuracy_text(result: Classification) -> str:
+def _accuracy_text(result: Evaluation) -> str:
     """e.g. `Accuracy: 2 of 3 cases (66.7%)`."""
-    total, correct = len(result.distributions), result.correct
-    share = correct / total if total else 0.0
-    return f"Accuracy: {correct} of {_plural(total, 'case', 'cases')} ({share:.1%})"
+    cases = _plural(result.cases, "case", "cases")
+    return f"Accuracy: {result.correct} of {cases} ({result.accuracy:.1%})"
 
 
 def render_blocks_plain(blocks: Sequence[Block]) -> str:

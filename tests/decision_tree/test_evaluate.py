@@ -31,6 +31,8 @@ def test_counts_errors_and_fills_the_confusion_matrix():
     assert result.cases == 5
     assert result.errors == 1
     assert result.error_rate == 0.2
+    assert result.correct == 4
+    assert result.accuracy == 0.8
     assert result.classes == ("yes", "no")
     # actual → predicted → count
     assert result.confusion == {"yes": {"yes": 2, "no": 0}, "no": {"yes": 1, "no": 2}}
@@ -42,6 +44,12 @@ def test_class_only_in_the_test_set_gets_a_row_and_column():
     assert result.classes == ("yes", "no", "maybe")
     assert result.confusion["maybe"] == {"yes": 1, "no": 0, "maybe": 0}
     assert result.errors == 1
+
+
+def test_classes_the_tree_does_not_know_follow_its_own_in_order_of_appearance():
+    result = evaluate(TREE, table(("y", "rarely"), ("x", "no"), ("x", "maybe")))
+
+    assert result.classes == ("yes", "no", "rarely", "maybe")
 
 
 def test_most_probable_class_is_predicted_and_ties_go_to_the_first_class():
@@ -56,9 +64,10 @@ def test_empty_test_set_has_no_errors_and_rate_zero():
     result = evaluate(TREE, table())
 
     assert (result.cases, result.errors, result.error_rate) == (0, 0, 0.0)
+    assert (result.correct, result.accuracy) == (0, 0.0)
 
 
-def test_classify_cases_predicts_the_most_probable_class_and_counts_correct_ones():
+def test_classify_cases_predicts_the_most_probable_class_and_evaluates_them():
     tree = Node(
         DiscreteTest("a1", 0, ("x", "y")),
         {
@@ -77,10 +86,18 @@ def test_classify_cases_predicts_the_most_probable_class_and_counts_correct_ones
         ClassDistribution(("yes", "no"), (0.5, 0.5)),
     )
     assert result.predicted == ("yes", "yes")
-    assert result.correct == 1
+    assert result.evaluation is not None
+    assert result.evaluation.classes == ("yes", "no")
+    # actual → predicted → count
+    assert result.evaluation.confusion == {
+        "yes": {"yes": 1, "no": 0},
+        "no": {"yes": 1, "no": 0},
+    }
+    assert result.evaluation.correct == 1
 
 
-def test_classify_cases_without_decisions_has_none_correct():
+def test_classify_cases_without_decisions_has_no_evaluation():
     result = classify_cases(TREE, Cases((("x",),), decisions=None))
 
-    assert (result.predicted, result.decisions, result.correct) == (("yes",), None, 0)
+    assert (result.predicted, result.decisions) == (("yes",), None)
+    assert result.evaluation is None

@@ -11,7 +11,8 @@ from decision_tree.tree import ClassDistribution, Tree, classify
 @dataclass(frozen=True)
 class Evaluation:
     classes: tuple[str, ...]
-    """Decision Classes in the matrix: the tree's, then any only in the table."""
+    """Decision Classes in the matrix: the tree's, then any only in the table, in
+    order of first appearance."""
     confusion: dict[str, dict[str, int]]
     """Actual class → predicted class → number of Cases."""
 
@@ -29,6 +30,16 @@ class Evaluation:
         """`errors / cases`; 0 for an empty table."""
         return self.errors / self.cases if self.cases else 0.0
 
+    @property
+    def correct(self) -> int:
+        """Cases whose predicted class is their actual class."""
+        return self.cases - self.errors
+
+    @property
+    def accuracy(self) -> float:
+        """`1 - error_rate`; 0 for an empty table."""
+        return 1 - self.error_rate if self.cases else 0.0
+
 
 def evaluate(tree: Tree, table: DecisionTable) -> Evaluation:
     """Classify every Case of `table` and compare with its decision.
@@ -36,12 +47,9 @@ def evaluate(tree: Tree, table: DecisionTable) -> Evaluation:
     The predicted class is the most probable one; on a tie, the one first in
     the Training Set's file order (spec R7).
     """
-    classes = tuple(dict.fromkeys([*tree.distribution, *table.classes]))
-    confusion = {actual: dict.fromkeys(classes, 0) for actual in classes}
-    result = classify_cases(tree, Cases(table.cases, table.decisions))
-    for actual, predicted in zip(table.decisions, result.predicted, strict=True):
-        confusion[actual][predicted] += 1
-    return Evaluation(classes, confusion)
+    evaluation = classify_cases(tree, Cases(table.cases, table.decisions)).evaluation
+    assert evaluation is not None  # a DecisionTable always has decisions
+    return evaluation
 
 
 @dataclass(frozen=True)
@@ -65,13 +73,21 @@ class Classification:
         decisions = self.decisions or (None,) * len(self.distributions)
         return zip(self.distributions, self.predicted, decisions, strict=True)
 
-    @property
-    def correct(self) -> int:
-        """Cases predicted as their decision; 0 without decisions."""
+    @cached_property
+    def evaluation(self) -> Evaluation | None:
+        """Confusion matrix of the predictions against the decisions; None
+        without decisions.
+
+        Its classes are the tree's, then any decision the tree does not know,
+        in order of first appearance.
+        """
         if self.decisions is None:
-            return 0
-        pairs = zip(self.predicted, self.decisions, strict=True)
-        return sum(predicted == actual for predicted, actual in pairs)
+            return None
+        classes = tuple(dict.fromkeys([*self.classes, *self.decisions]))
+        confusion = {actual: dict.fromkeys(classes, 0) for actual in classes}
+        for predicted, actual in zip(self.predicted, self.decisions, strict=True):
+            confusion[actual][predicted] += 1
+        return Evaluation(classes, confusion)
 
 
 def classify_cases(tree: Tree, cases: Cases) -> Classification:
