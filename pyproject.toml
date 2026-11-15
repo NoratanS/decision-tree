@@ -1,7 +1,7 @@
 [project]
 name = "decision-tree"
 version = "0.1.0"
-description = "Add your description here"
+description = "C4.5 decision trees from scratch, standard library only"
 readme = "README.md"
 authors = [
     { name = "Krzysztof Bielski", email = "kbielski23@gmail.com" }
