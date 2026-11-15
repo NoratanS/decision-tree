@@ -201,43 +201,23 @@ def test_unknown_override_column_gives_one_line_error(write_table):
 TEST_TABLE = str(DATA / "test_table.txt")
 
 
-def test_train_default_uses_gain_ratio_and_m_2():
-    result = runner.invoke(app, ["train", TEST_TABLE])
+@pytest.mark.parametrize(
+    ("flags", "root"),
+    [
+        ([], "a3 = 0:\n|   a4 = 1:\n|   |   a2 = 1:"),
+        (["-m", "1"], "a3 = 0:\n|   a4 = 1:\n|   |   a1 = 0:"),
+        (["--criterion", "gain"], "a1 = "),
+        (["--criterion", "gain-ratio"], "a3 = "),
+        (["--quinlan-gain-filter"], "a1 = "),
+    ],
+    ids=["default", "m-1", "gain", "gain-ratio", "quinlan-gain-filter"],
+)
+def test_train_build_flags_shape_the_tree(flags, root):
+    # Default: gain-ratio and -m 2.
+    result = runner.invoke(app, ["train", TEST_TABLE, *flags])
 
     assert result.exit_code == 0, result.output
-    assert unpruned_tree(result.stdout).startswith(
-        "a3 = 0:\n|   a4 = 1:\n|   |   a2 = 1:"
-    )
-
-
-def test_train_m_option_sets_the_minimum_branch_size():
-    result = runner.invoke(app, ["train", TEST_TABLE, "-m", "1"])
-
-    assert result.exit_code == 0, result.output
-    assert unpruned_tree(result.stdout).startswith(
-        "a3 = 0:\n|   a4 = 1:\n|   |   a1 = 0:"
-    )
-
-
-def test_train_criterion_gain_ranks_tests_by_gain():
-    result = runner.invoke(app, ["train", TEST_TABLE, "--criterion", "gain"])
-
-    assert result.exit_code == 0, result.output
-    assert unpruned_tree(result.stdout).startswith("a1 = ")
-
-
-def test_train_criterion_gain_ratio_can_be_named():
-    result = runner.invoke(app, ["train", TEST_TABLE, "--criterion", "gain-ratio"])
-
-    assert result.exit_code == 0, result.output
-    assert unpruned_tree(result.stdout).startswith("a3 = ")
-
-
-def test_train_quinlan_gain_filter_changes_the_root():
-    result = runner.invoke(app, ["train", TEST_TABLE, "--quinlan-gain-filter"])
-
-    assert result.exit_code == 0, result.output
-    assert unpruned_tree(result.stdout).startswith("a1 = ")
+    assert unpruned_tree(result.stdout).startswith(root)
 
 
 @pytest.mark.parametrize(
@@ -455,6 +435,13 @@ def test_classify_takes_the_build_options(write_table):
 
     assert result.exit_code == 0
     assert "   1  down       0.500  0.500" in result.stdout
+
+
+def test_classify_help_says_the_tree_is_unpruned():
+    result = runner.invoke(app, ["classify", "--help"])
+
+    assert result.exit_code == 0
+    assert "Build an unpruned tree from TRAIN" in result.stdout
 
 
 def test_train_confidence_level_may_be_fractional():

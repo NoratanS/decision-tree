@@ -216,11 +216,7 @@ def train(
         result = run_experiment(
             training,
             source,
-            BuildOptions(
-                criterion=criterion,
-                quinlan_gain_filter=quinlan_gain_filter,
-                min_cases=min_cases,
-            ),
+            _build_options(criterion, quinlan_gain_filter, min_cases),
             confidence=None if no_prune else confidence / 100,
         )
     except SplitError as error:
@@ -255,19 +251,14 @@ def classify(
     quinlan_gain_filter: GainFilter = False,
     min_cases: MinCases = 2,
 ) -> None:
-    """Build a tree from TRAIN and classify each case of CASES."""
+    """Build an unpruned tree from TRAIN and classify each case of CASES."""
     out = Console()
     with _table_errors():
         options = _read_options(header, sep, encoding, missing)
         training = _load_training(train_file, options, discrete, continuous)
         to_classify = load_cases(cases, options, like=training)
     tree = build_tree(
-        training,
-        BuildOptions(
-            criterion=criterion,
-            quinlan_gain_filter=quinlan_gain_filter,
-            min_cases=min_cases,
-        ),
+        training, _build_options(criterion, quinlan_gain_filter, min_cases)
     )
     _print(out, classification_blocks(classify_cases(tree, to_classify)), plain=plain)
 
@@ -291,6 +282,17 @@ def stats(
         options = _read_options(header, sep, encoding, missing)
         table = _load_training(file, options, discrete, continuous)
     _print(out, stats_blocks(table_stats(table)), plain=plain, spaced=False)
+
+
+def _build_options(
+    criterion: Criterion, quinlan_gain_filter: bool, min_cases: int
+) -> BuildOptions:
+    """The build options of `train` and `classify`, made in one place."""
+    return BuildOptions(
+        criterion=criterion,
+        quinlan_gain_filter=quinlan_gain_filter,
+        min_cases=min_cases,
+    )
 
 
 def _read_options(
