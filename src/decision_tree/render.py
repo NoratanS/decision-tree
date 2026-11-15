@@ -2,8 +2,9 @@
 
 C4.5-style trees (spec R9), table statistics (spec R2), evaluations and set
 names (spec R8), the Experiment report and classified Cases (spec R10). A
-TableBlock's cells carry a role (correct, wrong, empty) that plain text ignores
-and the Rich adapter in `cli.py` colours.
+TreeBlock holds a tree as outline rows, so this is the only output code that
+walks a tree. A TableBlock's cells carry a role (correct, wrong, empty) that
+plain text ignores and the Rich adapter in `cli.py` colours.
 """
 
 from collections.abc import Sequence
@@ -31,11 +32,7 @@ from decision_tree.tree import (
 
 def render_plain(tree: Tree) -> str:
     """The tree as C4.5 prints it, one test per line, without a final newline."""
-    if isinstance(tree, Leaf):
-        return leaf_text(tree)
-    lines: list[str] = []
-    _render_node(tree, 0, lines)
-    return "\n".join(lines)
+    return _outline_plain(tree_outline(tree))
 
 
 def tree_name(*, pruned: bool) -> str:
@@ -54,21 +51,6 @@ def tree_heading(tree: Tree, *, pruned_at: float | None = None) -> str:
     return f"{name} (size {size(tree)}, Confidence Level {percent}%)"
 
 
-def branch_text(node: Node, value: str, *, math_signs: bool = False) -> str:
-    """The outcome of a Node's test that leads to one branch.
-
-    `a1 = old` for a discrete test; `humidity <= 75` or `humidity > 75` for a
-    Threshold test, whose branch key is the comparison sign. With `math_signs`,
-    `<=` is written `≤`.
-    """
-    match node.test:
-        case ThresholdTest(attribute, _, threshold):
-            sign = value.replace("<=", "≤") if math_signs else value
-            return f"{attribute} {sign} {number_text(threshold)}"
-        case DiscreteTest(attribute):
-            return f"{attribute} = {value}"
-
-
 def number_text(number: float) -> str:
     """Shortest exact text for a number: `75`, not `75.0`."""
     if number.is_integer() and abs(number) < 1e16:
@@ -76,31 +58,88 @@ def number_text(number: float) -> str:
     return repr(number)
 
 
-def leaf_text(leaf: Leaf) -> str:
-    """`class (n)`, or `class (n/errors)` when the leaf misclassifies weight."""
-    return f"{leaf.decision} {leaf_counts(leaf)}"
+@dataclass(frozen=True)
+class BranchText:
+    """The outcome of a Node's test that leads to one branch: `a1 = old`,
+    `humidity <= 75` or `humidity > 75`. `sign` is `=`, `<=` or `>`."""
+
+    attribute: str
+    sign: Literal["=", "<=", ">"]
+    value: str
 
 
-def leaf_counts(leaf: Leaf) -> str:
-    """`(n)` or `(n/errors)`, one decimal each."""
+@dataclass(frozen=True)
+class LeafText:
+    """A Leaf's class and its counts, `(n)` or `(n/errors)`, one decimal each."""
+
+    decision: str
+    counts: str
+
+
+@dataclass(frozen=True)
+class TreeRow:
+    """One line of a tree outline, `depth` tests below the root.
+
+    `branch` is None only for a tree that is a single Leaf; `leaf` is None when
+    the branch leads to a Node, whose rows follow one level deeper.
+    """
+
+    depth: int
+    branch: BranchText | None
+    leaf: LeafText | None
+
+
+def tree_outline(tree: Tree) -> tuple[TreeRow, ...]:
+    """The tree as outline rows, depth first, branches in the Node's order."""
+    if isinstance(tree, Leaf):
+        return (TreeRow(0, None, _leaf_text(tree)),)
+    rows: list[TreeRow] = []
+    _outline_node(tree, 0, rows)
+    return tuple(rows)
+
+
+def _outline_node(node: Node, depth: int, rows: list[TreeRow]) -> None:
+    for value, child in node.branches.items():
+        branch = _branch_text(node, value)
+        if isinstance(child, Leaf):
+            rows.append(TreeRow(depth, branch, _leaf_text(child)))
+        else:
+            rows.append(TreeRow(depth, branch, None))
+            _outline_node(child, depth + 1, rows)
+
+
+def _branch_text(node: Node, value: str) -> BranchText:
+    # A Threshold test's branch key is its comparison sign.
+    match node.test, value:
+        case ThresholdTest(attribute, _, threshold), "<=" | ">" as sign:
+            return BranchText(attribute, sign, number_text(threshold))
+        case DiscreteTest(attribute), _:
+            return BranchText(attribute, "=", value)
+    raise ValueError(f"{value!r} is not a branch of {node.test}")
+
+
+def _leaf_text(leaf: Leaf) -> LeafText:
     total = leaf.distribution.total
     errors = round(leaf.distribution.errors(leaf.decision), 1)
     if errors > 0:
-        return f"({total:.1f}/{errors:.1f})"
-    return f"({total:.1f})"
+        return LeafText(leaf.decision, f"({total:.1f}/{errors:.1f})")
+    return LeafText(leaf.decision, f"({total:.1f})")
 
 
-def _render_node(node: Node, depth: int, lines: list[str]) -> None:
-    indent = "|   " * depth
-    # C4.5 puts a space before the colon on Threshold branches.
-    colon = " :" if isinstance(node.test, ThresholdTest) else ":"
-    for value, child in node.branches.items():
-        test = f"{indent}{branch_text(node, value)}{colon}"
-        if isinstance(child, Leaf):
-            lines.append(f"{test} {leaf_text(child)}")
-        else:
-            lines.append(test)
-            _render_node(child, depth + 1, lines)
+def _outline_plain(rows: Sequence[TreeRow]) -> str:
+    return "\n".join(map(_row_plain, rows))
+
+
+def _row_plain(row: TreeRow) -> str:
+    """`|   ` per level, then the branch with its colon, then the Leaf if any."""
+    parts = []
+    if (branch := row.branch) is not None:
+        # C4.5 puts a space before the colon on Threshold branches.
+        colon = ":" if branch.sign == "=" else " :"
+        parts.append(f"{branch.attribute} {branch.sign} {branch.value}{colon}")
+    if (leaf := row.leaf) is not None:
+        parts.append(f"{leaf.decision} {leaf.counts}")
+    return "|   " * row.depth + " ".join(parts)
 
 
 @dataclass(frozen=True)
@@ -220,25 +259,29 @@ def _count_cell(actual: str, predicted: str, count: int) -> Cell:
 
 @dataclass(frozen=True)
 class TreeBlock:
-    """A tree under its heading, e.g. `Unpruned tree (size 8)`."""
+    """A tree's outline rows under its heading, e.g. `Unpruned tree (size 8)`."""
 
     heading: str
-    tree: Tree
+    rows: tuple[TreeRow, ...]
 
 
 type Block = TreeBlock | TableBlock
 """One part of an output; plain text puts blocks one blank line apart."""
 
 
+def _tree_block(heading: str, tree: Tree) -> TreeBlock:
+    return TreeBlock(heading, tree_outline(tree))
+
+
 def experiment_blocks(result: ExperimentResult) -> list[Block]:
     """The report of an Experiment in order: the unpruned tree, the pruned tree
     if any, then for each set the unpruned tree's evaluation and the pruned
     tree's if any."""
-    blocks: list[Block] = [TreeBlock(tree_heading(result.unpruned), result.unpruned)]
+    blocks: list[Block] = [_tree_block(tree_heading(result.unpruned), result.unpruned)]
     if result.pruned is not None:
         assert result.confidence is not None, "a pruned tree has a Confidence Level"
         heading = tree_heading(result.pruned, pruned_at=result.confidence)
-        blocks.append(TreeBlock(heading, result.pruned))
+        blocks.append(_tree_block(heading, result.pruned))
     for on_set in result.evaluations:
         name = set_name(on_set.evaluated_set)
         for pruned, evaluation in ((False, on_set.unpruned), (True, on_set.pruned)):
@@ -309,8 +352,8 @@ def render_blocks_plain(blocks: Sequence[Block]) -> str:
 
 def _block_plain(block: Block) -> str:
     match block:
-        case TreeBlock(heading, tree):
-            return f"{heading}:\n{render_plain(tree)}"
+        case TreeBlock(heading, rows):
+            return f"{heading}:\n{_outline_plain(rows)}"
         case TableBlock(heading, columns, rows, plain_header, footer):
             lines = [] if heading is None else [heading]
             texts = [[cell.text for cell in row] for row in rows]

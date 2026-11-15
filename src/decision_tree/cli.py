@@ -28,10 +28,9 @@ from decision_tree.render import (
     Cell,
     TableBlock,
     TreeBlock,
-    branch_text,
+    TreeRow,
     classification_blocks,
     experiment_blocks,
-    leaf_text,
     render_blocks_plain,
     stats_blocks,
 )
@@ -46,7 +45,6 @@ from decision_tree.table import (
     parse_columns,
     parse_markers,
 )
-from decision_tree.tree import Leaf, Node, Tree
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 
@@ -343,8 +341,8 @@ def print_rich(out: Console, blocks: Sequence[Block], *, spaced: bool = True) ->
         if i and spaced:
             out.print()
         match block:
-            case TreeBlock(heading, tree):
-                out.print(_rich_tree(tree, heading))
+            case TreeBlock(heading, rows):
+                out.print(_rich_tree(heading, rows))
             case TableBlock(heading, columns, rows, _, footer):
                 if heading is not None:
                     _print_heading(out, heading)
@@ -371,28 +369,27 @@ def _print_heading(out: Console, text: str) -> None:
     out.print(f"[bold]{escape(text)}[/]", highlight=False, soft_wrap=True)
 
 
-def _rich_tree(tree: Tree, title: str) -> RichTree:
+def _rich_tree(title: str, rows: Sequence[TreeRow]) -> RichTree:
+    """Each row under the last row one level up; `<=` drawn as `≤`, a branch
+    and its Leaf joined by `→`."""
     root = RichTree(f"[bold]{escape(title)}[/]")
-    if isinstance(tree, Leaf):
-        root.add(_rich_leaf(tree))
-    else:
-        _add_branches(root, tree)
+    parents = [root]
+    for row in rows:
+        del parents[row.depth + 1 :]
+        parents.append(parents[row.depth].add(_rich_row(row)))
     return root
 
 
-def _add_branches(parent: RichTree, node: Node) -> None:
-    for value, child in node.branches.items():
-        test = f"[cyan]{escape(branch_text(node, value, math_signs=True))}[/]"
-        if isinstance(child, Leaf):
-            parent.add(f"{test} → {_rich_leaf(child)}")
-        else:
-            _add_branches(parent.add(test), child)
-
-
-def _rich_leaf(leaf: Leaf) -> str:
-    # The counts, `(n)` or `(n/errors)`, are the last word of the leaf's text.
-    counts = leaf_text(leaf).rsplit(" ", 1)[1]
-    return f"[bold green]{escape(leaf.decision)}[/] [dim]{counts}[/]"
+def _rich_row(row: TreeRow) -> str:
+    parts = []
+    if row.branch is not None:
+        sign = "≤" if row.branch.sign == "<=" else row.branch.sign
+        test = f"{row.branch.attribute} {sign} {row.branch.value}"
+        parts.append(f"[cyan]{escape(test)}[/]")
+    if row.leaf is not None:
+        decision, counts = escape(row.leaf.decision), escape(row.leaf.counts)
+        parts.append(f"[bold green]{decision}[/] [dim]{counts}[/]")
+    return " → ".join(parts)
 
 
 def _fail(message: str) -> NoReturn:

@@ -9,13 +9,17 @@ from decision_tree.experiment import (
     TrainingSet,
 )
 from decision_tree.render import (
+    BranchText,
+    LeafText,
     TableBlock,
+    TreeRow,
     classification_blocks,
     experiment_blocks,
     render_classification_plain,
     render_experiment_plain,
     render_plain,
     set_name,
+    tree_outline,
 )
 from decision_tree.tree import (
     ClassDistribution,
@@ -99,6 +103,53 @@ def test_thresholds_print_without_a_needless_decimal_point(threshold, text):
     )
 
     assert render_plain(tree).startswith(f"a1 <= {text} : ")
+
+
+def test_outline_of_a_discrete_tree_gives_one_row_per_branch_with_its_depth():
+    inner = Node(
+        DiscreteTest("a2", 1, ("p", "q")),
+        {
+            "p": Leaf("yes", ClassDistribution(("yes", "no"), (2.0, 0.0))),
+            "q": Leaf("no", ClassDistribution(("yes", "no"), (1.0, 1.0))),
+        },
+        ClassDistribution(("yes", "no"), (3.0, 1.0)),
+    )
+    tree = Node(
+        DiscreteTest("a1", 0, ("x", "y")),
+        {"x": inner, "y": Leaf("no", ClassDistribution(("yes", "no"), (0.0, 3.0)))},
+        ClassDistribution(("yes", "no"), (3.0, 4.0)),
+    )
+
+    assert tree_outline(tree) == (
+        TreeRow(0, BranchText("a1", "=", "x"), None),
+        TreeRow(1, BranchText("a2", "=", "p"), LeafText("yes", "(2.0)")),
+        TreeRow(1, BranchText("a2", "=", "q"), LeafText("no", "(2.0/1.0)")),
+        TreeRow(0, BranchText("a1", "=", "y"), LeafText("no", "(3.0)")),
+    )
+
+
+def test_outline_of_a_threshold_test_has_a_row_per_sign():
+    tree = Node(
+        ThresholdTest("humidity", 2, 75.0),
+        {
+            "<=": Leaf("Play", ClassDistribution(("Play", "Don't Play"), (2.0, 0.0))),
+            ">": Leaf(
+                "Don't Play", ClassDistribution(("Play", "Don't Play"), (0.0, 3.0))
+            ),
+        },
+        ClassDistribution(("Play", "Don't Play"), (2.0, 3.0)),
+    )
+
+    assert tree_outline(tree) == (
+        TreeRow(0, BranchText("humidity", "<=", "75"), LeafText("Play", "(2.0)")),
+        TreeRow(0, BranchText("humidity", ">", "75"), LeafText("Don't Play", "(3.0)")),
+    )
+
+
+def test_outline_of_a_single_leaf_is_one_row_without_a_branch():
+    leaf = Leaf("yes", ClassDistribution(("yes", "no"), (4.0, 2.0)))
+
+    assert tree_outline(leaf) == (TreeRow(0, None, LeafText("yes", "(6.0/2.0)")),)
 
 
 GOLF_CLASSES = ("Play", "Don't Play")
