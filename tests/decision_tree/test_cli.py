@@ -692,3 +692,25 @@ def test_stats_computes_the_statistics_once(monkeypatch):
 
     assert result.exit_code == 0, result.output
     assert len(calls) == 1
+
+
+@pytest.mark.parametrize("flags", [[], ["--continuous", "a"]], ids=["auto", "forced"])
+def test_train_reads_decimal_comma_numbers(write_table, flags):
+    path = write_table("a;b;d\n1,5;x;tak\n2,5;y;nie\n1,0;y;tak\n3,5;x;nie\n")
+
+    result = runner.invoke(app, ["train", str(path), "--header", "--plain", *flags])
+
+    assert result.exit_code == 0, result.output
+    assert unpruned_tree(result.stdout).startswith(
+        "a <= 1.5 : tak (2.0)\na > 1.5 : nie (2.0)\n"
+    )
+
+
+def test_stats_prints_decimal_comma_numbers_normalised(write_table):
+    path = write_table("a;b;d\n1,5;x;tak\n2,5;y;nie\n")
+
+    result = runner.invoke(app, ["stats", str(path), "--header", "--plain"])
+
+    assert result.exit_code == 0, result.output
+    assert "a (continuous): 2 values" in result.stdout
+    assert "  1.5  1" in result.stdout

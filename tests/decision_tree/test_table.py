@@ -335,8 +335,8 @@ def test_continuous_override_on_text_names_the_line_and_value(write_table):
 @pytest.mark.parametrize(
     ("text", "cases"),
     [
-        ("1,5;2,3;yes\n0,5;4,1;no\n", (("1,5", "2,3"), ("0,5", "4,1"))),
-        ("1,5 2,5 tak\n3,5 1,0 nie\n", (("1,5", "2,5"), ("3,5", "1,0"))),
+        ("1,5;2,3;yes\n0,5;4,1;no\n", (("1.5", "2.3"), ("0.5", "4.1"))),
+        ("1,5 2,5 tak\n3,5 1,0 nie\n", (("1.5", "2.5"), ("3.5", "1.0"))),
         ("12:30 sunny yes\n09:15 rain no\n", (("12:30", "sunny"), ("09:15", "rain"))),
     ],
 )
@@ -929,3 +929,102 @@ def test_test_set_column_count_error_says_the_ignored_columns_stay(write_table):
 
     with pytest.raises(TableError, match=r"expected 3 \(with the ignored a1\) like"):
         load_table(write_table("old up\n"), options, like=training)
+
+
+def test_decimal_comma_numbers_are_continuous_and_normalised(write_table):
+    path = write_table("a;b;d\n1,5;x;tak\n2,5;y;nie\n-0,25;x;tak\n")
+
+    table = load_table(path, ReadOptions(header=True))
+
+    assert table.kinds == ("continuous", "discrete")
+    assert table.values(0) == ("1.5", "2.5", "-0.25")
+
+
+def test_column_mixing_decimal_point_and_comma_is_continuous(write_table):
+    path = write_table("1.5;x;tak\n1,5;y;nie\n2,25;x;tak\n")
+
+    table = load_table(path)
+
+    assert table.kinds == ("continuous", "discrete")
+    assert table.values(0) == ("1.5", "2.25")
+
+
+def test_continuous_override_reads_decimal_comma_numbers(write_table):
+    path = write_table("2,0;x;tak\n3,0;y;nie\n4;x;tak\n")
+
+    table = load_table(path, continuous=["a1"])
+
+    assert table.kinds == ("continuous", "discrete")
+    assert table.values(0) == ("2.0", "3.0", "4")
+
+
+def test_decimal_comma_whole_numbers_are_discrete(write_table):
+    path = write_table("2,0;tak\n3,0;nie\n")
+
+    assert load_table(path).kinds == ("discrete",)
+
+
+def test_thousands_separators_stay_discrete_text(write_table):
+    path = write_table("1.234,5;tak\n1 234,5;nie\n0,5;tak\n")
+
+    table = load_table(path)
+
+    assert table.kinds == ("discrete",)
+    assert table.values(0) == ("1.234,5", "1 234,5", "0,5")
+
+
+def test_comma_separated_file_does_not_read_decimal_commas(write_table):
+    path = write_table('"1,5",yes\n"2,5",no\n')
+
+    table = load_table(path)
+
+    assert table.kinds == ("discrete",)
+    assert table.values(0) == ("1,5", "2,5")
+    with pytest.raises(TableError, match=r"a1 is continuous but '1,5' is not a numb"):
+        load_table(path, ReadOptions(sep=","), continuous=["a1"])
+
+
+def test_test_set_read_like_reads_decimal_commas(write_table):
+    training = load_table(write_table("1,5;tak\n2,5;nie\n", "train.txt"))
+    path = write_table("0,75;tak\n3;nie\n", "test.txt")
+
+    assert load_table(path, like=training).cases == (("0.75",), ("3",))
+    assert load_cases(path, like=training).cases == (("0.75",), ("3",))
+
+
+@pytest.mark.parametrize(
+    ("train", "text", "cases"),
+    [
+        ("1,5;tak\n4,5;nie\n", "1,5\n4,5\n", (("1.5",), ("4.5",))),
+        (
+            "1,5;0,5;tak\n4,5;9,5;nie\n",
+            "1,5;0,5\n4,5;9,5\n",
+            (("1.5", "0.5"), ("4.5", "9.5")),
+        ),
+    ],
+    ids=["one-attribute", "two-attributes"],
+)
+def test_cases_of_decimal_comma_numbers_are_not_split_on_the_comma(
+    write_table, train, text, cases
+):
+    training = load_table(write_table(train, "train.txt"))
+
+    loaded = load_cases(write_table(text, "cases.txt"), like=training)
+
+    assert loaded.cases == cases
+    assert loaded.decisions is None
+
+
+def test_cases_of_two_whole_numbers_keep_the_comma_separator(write_table):
+    training = load_table(write_table("10,20,tak\n30,40,nie\n", "train.txt"))
+
+    loaded = load_cases(write_table("10,20\n30,40\n", "cases.txt"), like=training)
+
+    assert loaded.cases == (("10", "20"), ("30", "40"))
+
+
+def test_decimal_comma_values_win_over_a_wider_comma_split(write_table):
+    table = load_table(write_table("1,5;2,5\n3,5;4,5\n"))
+
+    assert table.cases == (("1.5",), ("3.5",))
+    assert table.decisions == ("2,5", "4,5")

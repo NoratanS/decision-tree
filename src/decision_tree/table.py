@@ -2,7 +2,7 @@
 
 One case per line, the Decision Attribute in the last column unless another
 is named. The separator is detected from runs of whitespace, `,` `;` `|` `:`
-unless one is given.
+unless one is given. Unless the separator is `,`, `1,5` is the number `1.5`.
 """
 
 import codecs
@@ -26,6 +26,8 @@ _WHITESPACE = None
 """Separator meaning "runs of spaces and tabs"."""
 
 _NUMBER = re.compile(r"[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?")
+_DECIMAL_COMMA_NUMBER = re.compile(r"-?\d+,\d+")
+"""A number with a decimal comma (`1,5`), read when the separator is not `,`."""
 
 # Detection order, the last resort for breaking a tie on column count. `,` and
 # `:` come late because they also appear inside values (`1,5`, `12:30`).
@@ -217,8 +219,14 @@ def _load(
     decision: _Decision,
 ) -> _Loaded:
     """Read a file, check it against `schema`, split its cases and decisions,
-    and check that continuous columns hold numbers."""
-    parsed = _read_rows(path, options, min_columns=2 if decision == "required" else 1)
+    and check that continuous columns hold numbers, rewritten with a decimal
+    point."""
+    parsed = _read_rows(
+        path,
+        options,
+        min_columns=2 if decision == "required" else 1,
+        widths=schema.widths(options, decision),
+    )
     parsed = schema.without_ignored(parsed, options, decision)
     names, width, index = schema.columns(parsed, decision, options.decision)
     if index is not None:
@@ -227,8 +235,11 @@ def _load(
     decisions = _decisions(parsed, markers) if index is not None else None
     cases = _cases(parsed.rows, width, markers)
     decision_names = () if index is None else (names[-1], parsed.names[index])
-    kinds = schema.kinds(names, cases, decision_names)
-    _check_continuous(parsed.name, names, kinds, parsed.numbers, cases)
+    decimal_comma = parsed.sep != ","
+    kinds = schema.kinds(names, cases, decision_names, decimal_comma=decimal_comma)
+    cases = _continuous_numbers(
+        parsed.name, names, kinds, parsed.numbers, cases, decimal_comma=decimal_comma
+    )
     return _Loaded(names, kinds, cases, decisions)
 
 
@@ -238,6 +249,10 @@ class _Inferred:
 
     discrete: tuple[str, ...]
     continuous: tuple[str, ...]
+
+    def widths(self, options: ReadOptions, decision: _Decision) -> None:
+        """Any column count is allowed."""
+        return None
 
     def without_ignored(
         self, parsed: _Rows, options: ReadOptions, decision: _Decision
@@ -264,13 +279,18 @@ class _Inferred:
         names: tuple[str, ...],
         cases: tuple[tuple[Value, ...], ...],
         decision_names: tuple[str, ...],
+        *,
+        decimal_comma: bool,
     ) -> tuple[Kind, ...]:
         """Each Conditional Attribute's forced or inferred type. The decision,
         by any of `decision_names` (e.g. `d` and its file name `a1`), cannot
         be forced."""
         forced = _overrides(names, decision_names, self.discrete, self.continuous)
         columns = enumerate(zip(*cases, strict=True))
-        return tuple(forced.get(i) or _infer_kind(column) for i, column in columns)
+        return tuple(
+            forced.get(i) or _infer_kind(column, decimal_comma=decimal_comma)
+            for i, column in columns
+        )
 
 
 @dataclass(frozen=True)
@@ -278,6 +298,13 @@ class _Like:
     """Columns and types of another table, e.g. the Training Set."""
 
     table: DecisionTable
+
+    def widths(self, options: ReadOptions, decision: _Decision) -> tuple[int, ...]:
+        """The column counts a file may have: the Training Set's attributes
+        and the ignored columns, plus the decision column unless it is
+        optional."""
+        width = len(self.table.attributes) + len(set(options.ignore))
+        return (width + 1,) if decision == "required" else (width, width + 1)
 
     def without_ignored(
         self, parsed: _Rows, options: ReadOptions, decision: _Decision
@@ -291,12 +318,12 @@ class _Like:
         ignored column but kept its decision cannot be told from one with the
         ignored column and no decision, and is read as the latter.
         """
+        allowed = self.widths(options, decision)
         width = len(self.table.attributes) + len(set(options.ignore))
         found = len(parsed.rows[0])
         if decision == "required":
-            allowed, expected = (width + 1,), f"{width + 1}"
+            expected = f"{width + 1}"
         else:
-            allowed = (width, width + 1)
             expected = f"{width} (without a decision) or {width + 1}"
         if found not in allowed:
             kept = f" (with the ignored {', '.join(options.ignore)})"
@@ -367,6 +394,8 @@ class _Like:
         names: tuple[str, ...],
         cases: tuple[tuple[Value, ...], ...],
         decision_names: tuple[str, ...],
+        *,
+        decimal_comma: bool,
     ) -> tuple[Kind, ...]:
         return self.table.kinds
 
@@ -461,6 +490,8 @@ class _Rows:
     """Line number of each row."""
     header: bool
     """Whether the names come from the file's header line."""
+    sep: str | None
+    """The separator the rows were split on; None is whitespace."""
     names: list[str]
     """Column names: the header's, or `a1 … an` without one."""
     rows: list[list[str]]
@@ -479,8 +510,14 @@ def _drop_utf8_bom(text: str, encoding: str) -> str:
 
 
 def _read_rows(
-    path: str | os.PathLike[str], options: ReadOptions, *, min_columns: int
+    path: str | os.PathLike[str],
+    options: ReadOptions,
+    *,
+    min_columns: int,
+    widths: tuple[int, ...] | None,
 ) -> _Rows:
+    """`path` split into rows; a detected separator prefers giving one of
+    `widths` columns (None: any count)."""
     name = os.fspath(path)
     try:
         with open(path, encoding=options.encoding) as file:
@@ -504,14 +541,14 @@ def _read_rows(
         raise TableError(f"{name}: no cases found")
 
     candidates = _CANDIDATES if options.sep is None else (options.sep,)
-    rows = _split_table(name, lines, candidates, min_columns)
+    sep, rows = _split_table(name, lines, candidates, min_columns, widths)
     numbers = [number for number, _ in lines]
     if options.header:
         names = rows.pop(0)
         _check_header(name, numbers.pop(0), names)
     else:
         names = [f"a{k}" for k in range(1, len(rows[0]) + 1)]
-    return _Rows(name, numbers, options.header, names, rows)
+    return _Rows(name, numbers, options.header, sep, names, rows)
 
 
 def _decisions(parsed: _Rows, markers: frozenset[str]) -> tuple[str, ...]:
@@ -566,37 +603,57 @@ def _overrides(
     return forced
 
 
-def _check_continuous(
+def _continuous_numbers(
     name: str,
     names: Sequence[str],
     kinds: Sequence[Kind],
-    numbers: Iterable[int],
+    lines: Sequence[int],
     cases: tuple[tuple[Value, ...], ...],
-) -> None:
-    """Every known value in a column of Kind continuous must be a number."""
-    numbers = list(numbers)
-    for index, kind in enumerate(kinds):
-        if kind == "continuous":
-            column = (case[index] for case in cases)
-            _check_numeric(name, names[index], numbers, column)
+    *,
+    decimal_comma: bool,
+) -> tuple[tuple[Value, ...], ...]:
+    """`cases` with every known value of a continuous column checked to be a
+    number and written with a decimal point; `lines` is each case's line
+    number. Only cases with a value to rewrite are copied."""
+    continuous = [i for i, kind in enumerate(kinds) if kind == "continuous"]
+    if not continuous:
+        return cases
+    checked: list[tuple[Value, ...]] = []
+    for line, case in zip(lines, cases, strict=True):
+        rewritten: list[Value] | None = None
+        for index in continuous:
+            value = case[index]
+            if value is None:
+                continue
+            number = _number(value, decimal_comma=decimal_comma)
+            if number is None:
+                raise TableError(
+                    f"{name}, line {line}: {names[index]} is continuous "
+                    f"but {value!r} is not a number"
+                )
+            if number != value:
+                rewritten = rewritten or list(case)
+                rewritten[index] = number
+        checked.append(case if rewritten is None else tuple(rewritten))
+    return tuple(checked)
 
 
-def _check_numeric(
-    name: str, column: str, numbers: Iterable[int], values: Iterable[Value]
-) -> None:
-    for number, value in zip(numbers, values, strict=True):
-        if value is not None and not _NUMBER.fullmatch(value):
-            raise TableError(
-                f"{name}, line {number}: {column} is continuous but {value!r} "
-                "is not a number"
-            )
+def _number(value: str, *, decimal_comma: bool) -> str | None:
+    """`value` as a number with a decimal point, or None if it is not a
+    number. With `decimal_comma`, `1,5` is the number `1.5`."""
+    if _NUMBER.fullmatch(value):
+        return value
+    if decimal_comma and _DECIMAL_COMMA_NUMBER.fullmatch(value):
+        return value.replace(",", ".")
+    return None
 
 
-def _infer_kind(values: tuple[Value, ...]) -> Kind:
+def _infer_kind(values: tuple[Value, ...], *, decimal_comma: bool) -> Kind:
     """Continuous only if every known value is a number and one has a fraction
     (ADR 0001)."""
-    known = [v for v in values if v is not None]
-    if all(_NUMBER.fullmatch(v) for v in known) and any(map(_fractional, known)):
+    known = [_number(v, decimal_comma=decimal_comma) for v in values if v is not None]
+    numbers = [v for v in known if v is not None]
+    if len(numbers) == len(known) and any(map(_fractional, numbers)):
         return "continuous"
     return "discrete"
 
@@ -631,11 +688,16 @@ def _split_table(
     lines: list[tuple[int, str]],
     candidates: tuple[str | None, ...],
     min_columns: int,
-) -> list[list[str]]:
-    """Split with the candidate that gives the most columns on every line.
+    widths: tuple[int, ...] | None,
+) -> tuple[str | None, list[list[str]]]:
+    """The separator, and the rows split with it, that gives the most columns
+    on every line.
 
-    On a tie, prefer a candidate whose values contain none of the other tied
-    separators (`1,5;2,3` is `;`-separated), then the earlier candidate.
+    Candidates giving one of `widths` columns come first, if any does. `,` is
+    left out if another candidate fits and every value it leaves holding a
+    `,` is a decimal comma number (`1,5;0,5` is two numbers, not three
+    columns). On a tie, prefer a candidate whose values contain none of the
+    other tied separators (`1,5;2,3` is `;`-separated), then the earlier one.
     """
     fitting: dict[str | None, list[list[str]]] = {}
     errors: list[_LineError] = []
@@ -648,6 +710,13 @@ def _split_table(
         furthest = max(errors, key=lambda error: error.line)
         hint = "; no separator fits every line, set one" if len(candidates) > 1 else ""
         raise TableError(f"{name}, line {furthest.line}: {furthest.message}{hint}")
+    if widths is not None:
+        wanted = {sep: rows for sep, rows in fitting.items() if len(rows[0]) in widths}
+        fitting = wanted or fitting
+    if "," in fitting and any(
+        sep != "," and _decimal_commas_only(rows) for sep, rows in fitting.items()
+    ):
+        del fitting[","]
 
     width = max(len(rows[0]) for rows in fitting.values())
     tied = [sep for sep, rows in fitting.items() if len(rows[0]) == width]
@@ -661,7 +730,16 @@ def _split_table(
             if other is not sep
         )
 
-    return fitting[min(tied, key=splits_inside_values)]
+    sep = min(tied, key=splits_inside_values)
+    return sep, fitting[sep]
+
+
+def _decimal_commas_only(rows: list[list[str]]) -> bool:
+    """Some value holds a `,` and every such value is a decimal comma number."""
+    with_comma = [value for row in rows for value in row if "," in value]
+    return bool(with_comma) and all(
+        _DECIMAL_COMMA_NUMBER.fullmatch(value) for value in with_comma
+    )
 
 
 def _contains(value: str, sep: str | None) -> bool:
