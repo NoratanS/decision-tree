@@ -17,9 +17,11 @@ the MDL threshold penalty, like this implementation. Release 7 uses the
 average-Gain filter, so the default here is `--quinlan-gain-filter -m 2 -c 25`;
 `--course` turns the filter off.
 
-Raw UCI files live in `benchmarks/data/raw/`. The loader reads only files with
-the decision in the last column (tickets 31, 35), so each raw file is rewritten
-into a temporary directory: decision last, ID columns dropped. Integer columns
+Raw UCI files live in `benchmarks/data/raw/`. Each raw file is rewritten into a
+temporary directory with the decision last and ID columns dropped: the loader
+has no option to drop columns (ticket 35), and a decision-last copy keeps one
+read path for every dataset, though `--decision` (ticket 31) now reads a
+class-first file directly. Integer columns
 are read as discrete by default (ADR 0001, ticket 32), so each dataset names its
 numeric columns as continuous.
 

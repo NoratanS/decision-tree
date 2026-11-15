@@ -5,7 +5,7 @@ Learning a decision tree from a decision table and using it to classify new case
 ## Data
 
 **Decision Table**:
-A table of cases where every column but the last is a conditional attribute and the last column is the decision attribute. (PL: tabela decyzyjna)
+A table of cases where one column is the decision attribute and every other column is a conditional attribute. (PL: tabela decyzyjna)
 _Avoid_: dataset, data frame, training set (when meaning the table itself)
 
 **Case**:
@@ -17,7 +17,7 @@ A column that describes a case and may be tested in a node. (PL: atrybut warunko
 _Avoid_: feature, non-categorical attribute, input
 
 **Decision Attribute**:
-The single column, always last, holding the class each case belongs to. (PL: decyzja, atrybut decyzyjny)
+The single column holding the class each case belongs to: the last column of the file unless `--decision` names another. A loaded table always lists it last. (PL: decyzja, atrybut decyzyjny)
 _Avoid_: target, label, categorical attribute
 
 **Decision Class**:

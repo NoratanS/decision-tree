@@ -1,7 +1,8 @@
 """Loading a Decision Table from a text file (spec R1).
 
-One case per line, the Decision Attribute in the last column. The separator is
-detected from runs of whitespace, `,` `;` `|` `:` unless one is given.
+One case per line, the Decision Attribute in the last column unless another
+is named. The separator is detected from runs of whitespace, `,` `;` `|` `:`
+unless one is given.
 """
 
 import codecs
@@ -75,9 +76,12 @@ class ReadOptions:
     """How to read a Decision Table file; the same for every file of a run.
 
     `sep` is any single character; `None` detects the separator. With `header`
-    the first non-blank line names the columns, otherwise they are `a1 … an`
-    and `d`. The file is decoded with `encoding`; under any spelling of UTF-8
-    one leading byte order mark is dropped.
+    the first non-blank line names the columns, otherwise column K is `aK`.
+    `decision` names the Decision Attribute's column (`None`: the last one);
+    without a header it is then renamed `d`, and the default last column is `d`
+    too. The decision always comes last in a loaded table. The file is decoded
+    with `encoding`; under any spelling of UTF-8 one leading byte order mark is
+    dropped.
 
     A cell equal to one of the `missing` markers (after trimming) is a Missing
     Value, stored as None; `""` stands for the empty cell. Quoting does not
@@ -88,6 +92,7 @@ class ReadOptions:
     header: bool = False
     encoding: str = "utf-8"
     missing: tuple[str, ...] = MISSING_MARKERS
+    decision: str | None = None
 
     def __post_init__(self) -> None:
         if self.sep is not None and len(self.sep) != 1:
@@ -95,7 +100,8 @@ class ReadOptions:
 
 
 DEFAULT_READ_OPTIONS = ReadOptions()
-"""No header, detected separator, UTF-8, the default Missing Value markers."""
+"""No header, detected separator, UTF-8, the default Missing Value markers,
+the decision in the last column."""
 
 
 def parse_columns(text: str) -> tuple[str, ...]:
@@ -126,8 +132,9 @@ def load_table(
 
     With `like` (e.g. the Training Set, when reading a Test Set) the file must
     have that table's column count and takes its attribute types, so `discrete`
-    and `continuous` cannot be given. With `header`, its column names must also
-    be `like`'s, in the same order.
+    and `continuous` cannot be given. With `header`, its attribute names must
+    also be `like`'s, in the same order, and its decision column, wherever it
+    is, is found by `like`'s decision name when `options.decision` is given.
     """
     discrete, continuous = tuple(discrete), tuple(continuous)
     if like is not None and (discrete or continuous):
@@ -166,16 +173,17 @@ def load_cases(
 ) -> Cases:
     """Read Cases to classify with a tree built from `like` (spec R10).
 
-    The file has one column per Conditional Attribute of `like`, optionally
-    followed by the decision. The attribute types are `like`'s. With `header`,
-    the column names must be `like`'s, in the same order.
+    The file has one column per Conditional Attribute of `like`, in `like`'s
+    order, plus optionally the decision column where `options.decision` puts
+    it. The attribute types are `like`'s. With `header`, the column names must
+    be `like`'s, in the file's order.
     """
     loaded = _load(path, options, schema=_Like(like), decision="optional")
     return Cases(loaded.cases, loaded.decisions)
 
 
 type _Decision = Literal["required", "optional"]
-"""Whether a file must end with the decision column or may leave it out."""
+"""Whether a file must have the decision column or may leave it out."""
 
 
 @dataclass(frozen=True)
@@ -201,12 +209,14 @@ def _load(
     """Read a file, check it against `schema`, split its cases and decisions,
     and check that continuous columns hold numbers."""
     parsed = _read_rows(path, options, min_columns=2 if decision == "required" else 1)
-    names, width = schema.columns(parsed, decision)
+    names, width, index = schema.columns(parsed, decision, options.decision)
+    if index is not None:
+        parsed = _decision_last(parsed, index)
     markers = frozenset(options.missing)
-    has_decisions = len(parsed.rows[0]) > width
-    decisions = _decisions(parsed, markers) if has_decisions else None
+    decisions = _decisions(parsed, markers) if index is not None else None
     cases = _cases(parsed.rows, width, markers)
-    kinds = schema.kinds(names, cases)
+    decision_names = () if index is None else (names[-1], _names(parsed)[index])
+    kinds = schema.kinds(names, cases, decision_names)
     _check_continuous(parsed.name, names, kinds, parsed.numbers, cases)
     return _Loaded(names, kinds, cases, decisions)
 
@@ -219,19 +229,27 @@ class _Inferred:
     continuous: tuple[str, ...]
 
     def columns(
-        self, parsed: _Rows, decision: _Decision
-    ) -> tuple[tuple[str, ...], int]:
-        """Column names and the number of Conditional Attributes. The decision
-        is the last column, so `decision` must be required."""
+        self, parsed: _Rows, decision: _Decision, decision_name: str | None
+    ) -> tuple[tuple[str, ...], int, int]:
+        """Column names (the decision's last), the number of Conditional
+        Attributes and the decision's column index. The file must have the
+        decision column, so `decision` must be required."""
         if decision != "required":
             raise ValueError("inferring a table's columns needs its decision column")
         width = len(parsed.rows[0])
-        return _file_names(parsed, width), width - 1
+        index = _decision_index(parsed, decision_name)
+        return _file_names(parsed, index), width - 1, index
 
     def kinds(
-        self, names: tuple[str, ...], cases: tuple[tuple[Value, ...], ...]
+        self,
+        names: tuple[str, ...],
+        cases: tuple[tuple[Value, ...], ...],
+        decision_names: tuple[str, ...],
     ) -> tuple[Kind, ...]:
-        forced = _overrides(names, self.discrete, self.continuous)
+        """Each Conditional Attribute's forced or inferred type. The decision,
+        by any of `decision_names` (e.g. `d` and its file name `a1`), cannot
+        be forced."""
+        forced = _overrides(names, decision_names, self.discrete, self.continuous)
         columns = enumerate(zip(*cases, strict=True))
         return tuple(forced.get(i) or _infer_kind(column) for i, column in columns)
 
@@ -243,14 +261,15 @@ class _Like:
     table: DecisionTable
 
     def columns(
-        self, parsed: _Rows, decision: _Decision
-    ) -> tuple[tuple[str, ...], int]:
-        """Column names and the number of Conditional Attributes, after checking
-        the file has `table`'s column count and, with a header, its names in
-        the same order.
+        self, parsed: _Rows, decision: _Decision, decision_name: str | None
+    ) -> tuple[tuple[str, ...], int, int | None]:
+        """Column names (the decision's last), the number of Conditional
+        Attributes and the decision's column index (None if the file has no
+        decision column), after checking the file has `table`'s column count
+        and, with a header, its names in the file's order.
 
         Without a header, a file that must have the decision is named like any
-        other (`a1 … an`, `d`); Cases keep `table`'s names.
+        other (`aK`, `d`); Cases keep `table`'s names.
         """
         like = self.table
         width = len(like.attributes)
@@ -266,30 +285,92 @@ class _Like:
                 "like the Training Set"
             )
         like_names = (*like.attributes, like.decision)
+        if found == width:
+            index = None
+        elif parsed.header_names is not None and decision_name is not None:
+            index = _header_decision_index(parsed.header_names, like)
+        else:
+            index = _decision_index(parsed, decision_name)
         if parsed.header_names is not None:
+            in_file_order = list(like.attributes)
+            if index is not None:
+                in_file_order.insert(index, like.decision)
             for column, (name, wanted) in enumerate(
-                zip(parsed.header_names, like_names, strict=False), start=1
+                zip(parsed.header_names, in_file_order, strict=True), start=1
             ):
                 if name != wanted:
                     raise TableError(
                         f"{parsed.name}: column {column} is named {name!r}, "
                         f"expected {wanted!r} like the Training Set"
                     )
+        if index is None:  # Cases without a decision column
+            return like.attributes, width, index
         if parsed.header_names is None and decision == "optional":
-            return like_names[:found], width
-        return _file_names(parsed, found), width
+            return like_names, width, index
+        return _file_names(parsed, index), width, index
 
     def kinds(
-        self, names: tuple[str, ...], cases: tuple[tuple[Value, ...], ...]
+        self,
+        names: tuple[str, ...],
+        cases: tuple[tuple[Value, ...], ...],
+        decision_names: tuple[str, ...],
     ) -> tuple[Kind, ...]:
         return self.table.kinds
 
 
-def _file_names(parsed: _Rows, width: int) -> tuple[str, ...]:
-    """The header's column names, or `a1 … an` and `d` without a header."""
+def _names(parsed: _Rows) -> list[str]:
+    """The file's column names: the header's, or `a1 … an` without one."""
     if parsed.header_names is not None:
-        return tuple(parsed.header_names)
-    return (*(f"a{i}" for i in range(1, width)), "d")
+        return list(parsed.header_names)
+    return [f"a{k}" for k in range(1, len(parsed.rows[0]) + 1)]
+
+
+def _file_names(parsed: _Rows, index: int) -> tuple[str, ...]:
+    """Column names with the decision's (at `index`) last: the header's, or
+    without a header `aK` for column K and `d` for the decision."""
+    names = _names(parsed)
+    if parsed.header_names is None:
+        names[index] = "d"
+    return (*names[:index], *names[index + 1 :], names[index])
+
+
+def _header_decision_index(header: Sequence[str], like: DecisionTable) -> int:
+    """Where `like`'s decision is in `header`, found by its name. If no column
+    has that name, the first column that is not the next of `like`'s
+    attributes, so the name check reports it (spec R1.10)."""
+    if like.decision in header:
+        return list(header).index(like.decision)
+    attributes = like.attributes
+    for column, name in enumerate(header):
+        if column >= len(attributes) or name != attributes[column]:
+            return column
+    return len(header) - 1
+
+
+def _decision_index(parsed: _Rows, name: str | None) -> int:
+    """The column index of the decision named `name`; None is the last column.
+
+    Names are the header's, or `a1 … an` without a header. An unknown name is
+    an error listing the valid ones.
+    """
+    width = len(parsed.rows[0])
+    if name is None:
+        return width - 1
+    names = _names(parsed)
+    if name not in names:
+        raise TableError(
+            f"{parsed.name}: unknown decision column {name!r} "
+            f"(columns: {', '.join(names)})"
+        )
+    return names.index(name)
+
+
+def _decision_last(parsed: _Rows, index: int) -> _Rows:
+    """`parsed` with the column at `index` moved to the end of every row."""
+    if index == len(parsed.rows[0]) - 1:
+        return parsed
+    rows = [[*row[:index], *row[index + 1 :], row[index]] for row in parsed.rows]
+    return replace(parsed, rows=rows)
 
 
 @dataclass(frozen=True)
@@ -374,9 +455,13 @@ def _cases(
 
 
 def _overrides(
-    names: Sequence[str], discrete: Iterable[str], continuous: Iterable[str]
+    names: Sequence[str],
+    decision_names: Sequence[str],
+    discrete: Iterable[str],
+    continuous: Iterable[str],
 ) -> dict[int, Kind]:
-    """Column index → forced Kind; unknown names are an error."""
+    """Column index → forced Kind; unknown names and any of `decision_names`
+    (the caller passes every name the decision goes by) are an error."""
     forced: dict[int, Kind] = {}
     requested: tuple[tuple[Kind, Iterable[str]], ...] = (
         ("discrete", discrete),
@@ -384,7 +469,7 @@ def _overrides(
     )
     for kind, columns in requested:
         for column in columns:
-            if column == names[-1]:
+            if column in decision_names:
                 raise TableError(
                     f"{column!r} is the Decision Attribute and cannot be forced {kind}"
                 )

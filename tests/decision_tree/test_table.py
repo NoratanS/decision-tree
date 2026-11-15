@@ -591,3 +591,188 @@ def test_missing_option_is_a_comma_list_where_an_empty_item_is_the_empty_cell(
     dash_and_empty = load_table(path, ReadOptions(missing=parse_markers("-,")))
     assert only_dash.cases == (("old", None), ("", "?"), ("new", "yes"))
     assert dash_and_empty.cases == (("old", None), (None, "?"), ("new", "yes"))
+
+
+def test_decision_picked_without_header_is_d_and_attributes_keep_positions(
+    write_table,
+):
+    path = write_table("p x 1.5\ne y 2.5\n")
+
+    table = load_table(path, ReadOptions(decision="a1"))
+
+    assert table.attributes == ("a2", "a3")
+    assert table.decision == "d"
+    assert table.cases == (("x", "1.5"), ("y", "2.5"))
+    assert table.decisions == ("p", "e")
+    assert table.kinds == ("discrete", "continuous")
+
+
+def test_decision_in_the_middle_of_a_header_file_is_named_by_its_header(
+    write_table,
+):
+    path = write_table("id,Survived,sex\n1,yes,m\n2,no,f\n")
+
+    table = load_table(path, ReadOptions(header=True, decision="Survived"))
+
+    assert table.attributes == ("id", "sex")
+    assert table.decision == "Survived"
+    assert table.cases == (("1", "m"), ("2", "f"))
+    assert table.decisions == ("yes", "no")
+
+
+@pytest.mark.parametrize(
+    ("text", "options", "names"),
+    [
+        ("p x 1\n", ReadOptions(decision="d"), "a1, a2, a3"),
+        ("id,sex,y\n1,m,yes\n", ReadOptions(header=True, decision="Y"), "id, sex, y"),
+    ],
+)
+def test_unknown_decision_is_a_one_line_error_listing_the_columns(
+    write_table, text, options, names
+):
+    path = write_table(text)
+
+    with pytest.raises(TableError) as error:
+        load_table(path, options)
+    assert f"unknown decision column {options.decision!r} (columns: {names})" in str(
+        error.value
+    )
+    assert "\n" not in str(error.value)
+
+
+@pytest.mark.parametrize("override", ["discrete", "continuous"])
+@pytest.mark.parametrize("name", ["a1", "d"])
+def test_picked_decision_cannot_be_overridden(write_table, override, name):
+    path = write_table("p x 1\n")
+
+    with pytest.raises(TableError, match=f"'{name}' is the Decision Attribute"):
+        load_table(path, ReadOptions(decision="a1"), **{override: [name]})
+
+
+def test_decision_named_in_a_header_cannot_be_overridden(write_table):
+    path = write_table("id,y,sex\n1,yes,m\n")
+
+    with pytest.raises(TableError, match="'y' is the Decision Attribute"):
+        load_table(path, ReadOptions(header=True, decision="y"), discrete=["y"])
+
+
+def test_default_decision_is_the_last_column_even_when_named(write_table):
+    path = write_table("p x yes\n")
+
+    assert load_table(path) == load_table(path, ReadOptions(decision="a3"))
+    assert load_table(path).decision == "d"
+
+
+def test_test_set_like_the_training_set_uses_its_decision_column(write_table):
+    options = ReadOptions(decision="a1")
+    training = load_table(write_table("p x 1.5\ne y 2.5\n", name="t.txt"), options)
+
+    test = load_table(write_table("e z 3.5\n", name="test.txt"), options, like=training)
+
+    assert test.attributes == ("a2", "a3")
+    assert test.cases == (("z", "3.5"),)
+    assert test.decisions == ("e",)
+    assert test.kinds == training.kinds
+
+
+@pytest.mark.parametrize(
+    ("text", "decisions"),
+    [("e z 3.5\n", ("e",)), ("z 3.5\n", None)],
+    ids=["n columns", "n-1 columns"],
+)
+def test_cases_like_the_training_set_use_its_decision_column(
+    write_table, text, decisions
+):
+    options = ReadOptions(decision="a1")
+    training = load_table(write_table("p x 1.5\ne y 2.5\n", name="t.txt"), options)
+
+    cases = load_cases(write_table(text), options, like=training)
+
+    assert cases.cases == (("z", "3.5"),)
+    assert cases.decisions == decisions
+
+
+@pytest.mark.parametrize(
+    ("text", "decisions"),
+    [("id,y,sex\n3,no,f\n", ("no",)), ("id,sex\n3,f\n", None)],
+    ids=["n columns", "n-1 columns"],
+)
+def test_header_cases_like_the_training_set_use_its_decision_column(
+    write_table, text, decisions
+):
+    options = ReadOptions(header=True, decision="y")
+    training = load_table(write_table("id,y,sex\n1,yes,m\n", name="t.txt"), options)
+
+    cases = load_cases(write_table(text), options, like=training)
+
+    assert cases.cases == (("3", "f"),)
+    assert cases.decisions == decisions
+
+
+def test_header_test_set_finds_the_decision_by_name(write_table):
+    options = ReadOptions(header=True, decision="y")
+    training = load_table(write_table("id,y,sex\n1,yes,m\n", name="t.txt"), options)
+
+    test = load_table(write_table("y,id,sex\nno,3,f\n"), options, like=training)
+
+    assert test.cases == (("3", "f"),)
+    assert test.decisions == ("no",)
+
+
+def test_header_test_set_names_the_first_attribute_out_of_order(write_table):
+    options = ReadOptions(header=True, decision="y")
+    training = load_table(write_table("id,y,sex\n1,yes,m\n", name="t.txt"), options)
+    path = write_table("sex,y,id\nf,no,3\n")
+
+    with pytest.raises(TableError, match="column 1 is named 'sex', expected 'id'"):
+        load_table(path, options, like=training)
+
+
+def test_class_first_file_with_missing_attribute_values_loads(write_table):
+    path = write_table("republican,n,?\ndemocrat,?,y\n")
+
+    table = load_table(path, ReadOptions(decision="a1"))
+
+    assert table.cases == (("n", None), (None, "y"))
+    assert table.decisions == ("republican", "democrat")
+
+
+@pytest.mark.parametrize("override", ["discrete", "continuous"])
+def test_default_decision_named_by_its_position_cannot_be_overridden(
+    write_table, override
+):
+    path = write_table("p x yes\n")
+
+    with pytest.raises(TableError, match="'a3' is the Decision Attribute"):
+        load_table(path, **{override: ["a3"]})
+
+
+def test_header_test_set_without_the_picked_decision_names_the_odd_column(
+    write_table,
+):
+    options = ReadOptions(header=True, decision="c")
+    training = load_table(write_table("x,c,y\n1.5,yes,a\n", name="t.txt"), options)
+    path = write_table("x,y,z\n1.5,a,yes\n")
+
+    with pytest.raises(TableError, match="column 3 is named 'z', expected 'c'"):
+        load_table(path, options, like=training)
+
+
+UCI = Path(__file__).parent.parent.parent / "benchmarks" / "data" / "raw"
+
+
+@pytest.mark.parametrize(
+    ("name", "attributes", "classes"),
+    [
+        ("agaricus-lepiota.data", 22, {"e", "p"}),
+        ("house-votes-84.data", 16, {"democrat", "republican"}),
+    ],
+)
+def test_uci_files_with_the_class_first_load_with_decision_a1(
+    name, attributes, classes
+):
+    table = load_table(UCI / name, ReadOptions(decision="a1"))
+
+    assert table.attributes[0] == "a2" and len(table.attributes) == attributes
+    assert table.decision == "d"
+    assert set(table.decisions) == classes

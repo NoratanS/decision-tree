@@ -515,3 +515,88 @@ def test_rich_adapter_maps_cell_roles_to_colours():
     assert "\x1b[31m2\x1b[0m" in text  # wrong: red
     assert "\x1b[2m0\x1b[0m" in text  # empty: dim
     assert "│ plain │" in text and "│ [x]   │" in text  # plain cells, escaped
+
+
+CLASS_FIRST = "p,x,1\ne,y,1\np,x,2\ne,y,2\n"
+
+
+def test_stats_prints_a_picked_decision_last_as_d(write_table):
+    result = runner.invoke(
+        app, ["stats", str(write_table(CLASS_FIRST)), "--decision", "a1"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout.startswith("a2 (discrete): 2 values")
+    assert "\na3 (discrete): 2 values" in result.stdout
+    assert result.stdout.endswith("d (decision): 2 classes\n  p  2\n  e  2\n")
+
+
+def test_train_and_classify_use_the_picked_decision(write_table):
+    training = str(write_table(CLASS_FIRST, name="training.txt"))
+    cases = str(write_table("x,2\ny,1\n", name="cases.txt"))
+
+    trained = runner.invoke(app, ["train", training, "--decision", "a1", "-m", "1"])
+    classified = runner.invoke(
+        app, ["classify", training, cases, "--decision", "a1", "-m", "1"]
+    )
+
+    assert trained.exit_code == 0, trained.output
+    assert unpruned_tree(trained.stdout).startswith("a2 = x: p (2.0)\na2 = y: e (2.0)")
+    assert classified.exit_code == 0, classified.output
+    predicted = [line.split()[1] for line in classified.stdout.splitlines()[1:]]
+    assert predicted == ["p", "e"]
+
+
+def test_unknown_decision_gives_one_line_error_listing_the_columns(write_table):
+    result = runner.invoke(
+        app, ["stats", str(write_table(CLASS_FIRST)), "--decision", "class"]
+    )
+
+    assert result.exit_code == 1
+    assert result.stderr.strip().count("\n") == 0
+    assert "unknown decision column 'class' (columns: a1, a2, a3)" in result.stderr
+
+
+def test_forcing_the_picked_decision_gives_one_line_error(write_table):
+    path = str(write_table(CLASS_FIRST))
+    result = runner.invoke(
+        app, ["stats", path, "--decision", "a1", "--continuous", "a1"]
+    )
+
+    assert result.exit_code == 1
+    assert result.stderr.strip().count("\n") == 0
+    assert "'a1' is the Decision Attribute" in result.stderr
+
+
+def test_train_tests_a_test_set_with_the_picked_decision(write_table):
+    training = str(write_table(CLASS_FIRST, name="training.txt"))
+    test = str(write_table("p,x,1\ne,x,2\n", name="test.txt"))
+
+    result = runner.invoke(
+        app, ["train", training, "--decision", "a1", "-m", "1", "--test", test]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "2 cases, 1 error (50.0%)" in result.stdout
+
+
+def test_header_decision_in_the_middle_is_picked_by_name(write_table):
+    training = str(
+        write_table("id,Survived,sex\n1,yes,m\n2,no,f\n3,yes,m\n", name="t.csv")
+    )
+    cases = str(write_table("id,sex\n4,f\n5,m\n", name="cases.csv"))
+
+    stats = runner.invoke(
+        app, ["stats", training, "--header", "--decision", "Survived"]
+    )
+    classified = runner.invoke(
+        app,
+        ["classify", training, cases, "--header", "--decision", "Survived", "-m", "1"],
+    )
+
+    assert stats.exit_code == 0, stats.output
+    assert stats.stdout.startswith("id (")
+    assert "\nSurvived (decision): 2 classes" in stats.stdout
+    assert classified.exit_code == 0, classified.output
+    predicted = [line.split()[1] for line in classified.stdout.splitlines()[1:]]
+    assert predicted == ["no", "yes"]

@@ -71,6 +71,15 @@ Encoding = Annotated[
         "--encoding", help="File encoding, e.g. cp1250.", rich_help_panel=_LOADING
     ),
 ]
+DecisionOption = Annotated[
+    str | None,
+    typer.Option(
+        "--decision",
+        help="Column of the decision: a header name, or aK for column K. "
+        "Default: the last column.",
+        rich_help_panel=_LOADING,
+    ),
+]
 Discrete = Annotated[
     str,
     typer.Option(
@@ -161,6 +170,7 @@ def train(
     header: Header = False,
     sep: Sep = None,
     encoding: Encoding = "utf-8",
+    decision: DecisionOption = None,
     discrete: Discrete = "",
     continuous: Continuous = "",
     missing: Missing = _DEFAULT_MISSING,
@@ -204,7 +214,7 @@ def train(
     out = Console()
     source: TestSource = None
     with _table_errors():
-        options = _read_options(header, sep, encoding, missing)
+        options = _read_options(header, sep, encoding, missing, decision)
         training = _load_training(file, options, discrete, continuous)
         if test is not None:
             source = FileSource(test, load_table(test, options, like=training))
@@ -242,6 +252,7 @@ def classify(
     header: Header = False,
     sep: Sep = None,
     encoding: Encoding = "utf-8",
+    decision: DecisionOption = None,
     discrete: Discrete = "",
     continuous: Continuous = "",
     missing: Missing = _DEFAULT_MISSING,
@@ -252,7 +263,7 @@ def classify(
     """Build an unpruned tree from TRAIN and classify each case of CASES."""
     out = Console()
     with _table_errors():
-        options = _read_options(header, sep, encoding, missing)
+        options = _read_options(header, sep, encoding, missing, decision)
         training = _load_training(train_file, options, discrete, continuous)
         to_classify = load_cases(cases, options, like=training)
     tree = build_tree(
@@ -270,6 +281,7 @@ def stats(
     header: Header = False,
     sep: Sep = None,
     encoding: Encoding = "utf-8",
+    decision: DecisionOption = None,
     discrete: Discrete = "",
     continuous: Continuous = "",
     missing: Missing = _DEFAULT_MISSING,
@@ -277,7 +289,7 @@ def stats(
     """Show each attribute's type, value counts and missing values."""
     out = Console()
     with _table_errors():
-        options = _read_options(header, sep, encoding, missing)
+        options = _read_options(header, sep, encoding, missing, decision)
         table = _load_training(file, options, discrete, continuous)
     _print(out, stats_blocks(table_stats(table)), plain=plain, spaced=False)
 
@@ -294,10 +306,14 @@ def _build_options(
 
 
 def _read_options(
-    header: bool, sep: str | None, encoding: str, missing: str
+    header: bool, sep: str | None, encoding: str, missing: str, decision: str | None
 ) -> ReadOptions:
     return ReadOptions(
-        sep=sep, header=header, encoding=encoding, missing=parse_markers(missing)
+        sep=sep,
+        header=header,
+        encoding=encoding,
+        missing=parse_markers(missing),
+        decision=decision,
     )
 
 
