@@ -197,8 +197,6 @@ def train(
     """Build a C4.5 tree, prune it, print both and evaluate both."""
     if not 0 < confidence <= 100:
         raise typer.BadParameter("must be above 0 and at most 100", param_hint="-c")
-    if split is not None and not 0 < split < 1:
-        raise typer.BadParameter("must be between 0 and 1", param_hint="--split")
     if test is not None and split is not None:
         _fail("--test and --split cannot be used together")
     if seed is not None and split is None:
@@ -210,9 +208,9 @@ def train(
         training = _load_training(file, options, discrete, continuous)
         if test is not None:
             source = FileSource(test, load_table(test, options, like=training))
-    if split is not None:
-        source = HoldOut(split, seed)
     try:
+        if split is not None:
+            source = HoldOut(split, seed)
         result = run_experiment(
             training,
             source,

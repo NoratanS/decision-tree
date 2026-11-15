@@ -15,8 +15,8 @@ from decision_tree.evaluate import Classification, Evaluation
 from decision_tree.experiment import (
     EvaluatedSet,
     ExperimentResult,
-    FileTestSet,
-    HoldOutTestSet,
+    FileSource,
+    HoldOut,
     TrainingSet,
 )
 from decision_tree.stats import AttributeStats, TableStats
@@ -215,9 +215,9 @@ def _set_name(evaluated_set: EvaluatedSet) -> str:
     match evaluated_set:
         case TrainingSet():
             return "Training Set"
-        case FileTestSet(file):
+        case FileSource(file, _):
             return f"Test Set ({file})"
-        case HoldOutTestSet(seed):
+        case HoldOut(_, seed):
             return f"Test Set (hold-out, --seed {seed})"
 
 
@@ -276,18 +276,29 @@ def experiment_blocks(result: ExperimentResult) -> list[Block]:
     """The report of an Experiment in order: the unpruned tree, the pruned tree
     if any, then for each set the unpruned tree's evaluation and the pruned
     tree's if any."""
-    blocks: list[Block] = [_tree_block(_tree_heading(result.unpruned), result.unpruned)]
-    if result.pruned is not None:
-        tree, confidence = result.pruned.tree, result.pruned.confidence
-        blocks.append(_tree_block(_tree_heading(tree, pruned_at=confidence), tree))
-    for on_set in result.evaluations:
-        name = _set_name(on_set.evaluated_set)
-        for pruned, evaluation in ((False, on_set.unpruned), (True, on_set.pruned)):
-            if evaluation is not None:
-                label = f"{_tree_name(pruned=pruned)} on {name}"
-                heading = _evaluation_heading(label, evaluation)
-                blocks.append(_confusion_table(heading, evaluation))
+    unpruned, pruned = result.unpruned, result.pruned
+    blocks: list[Block] = [_tree_block(_tree_heading(unpruned.tree), unpruned.tree)]
+    if pruned is not None:
+        heading = _tree_heading(pruned.tree, pruned_at=pruned.confidence)
+        blocks.append(_tree_block(heading, pruned.tree))
+    if pruned is None:
+        for evaluated_set, on_set in unpruned.evaluations:
+            blocks.append(_evaluation_table(_set_name(evaluated_set), on_set))
+        return blocks
+    pairs = zip(unpruned.evaluations, pruned.evaluations, strict=True)
+    for (evaluated_set, on_set), (_, pruned_on_set) in pairs:
+        name = _set_name(evaluated_set)
+        blocks.append(_evaluation_table(name, on_set))
+        blocks.append(_evaluation_table(name, pruned_on_set, pruned=True))
     return blocks
+
+
+def _evaluation_table(
+    set_name: str, evaluation: Evaluation, *, pruned: bool = False
+) -> TableBlock:
+    """e.g. `Pruned tree on Training Set: ...` above its confusion matrix."""
+    label = f"{_tree_name(pruned=pruned)} on {set_name}"
+    return _confusion_table(_evaluation_heading(label, evaluation), evaluation)
 
 
 def classification_blocks(result: Classification) -> list[TableBlock]:

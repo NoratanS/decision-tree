@@ -5,9 +5,7 @@ import pytest
 from decision_tree.builder import BuildOptions
 from decision_tree.experiment import (
     FileSource,
-    FileTestSet,
     HoldOut,
-    HoldOutTestSet,
     SplitError,
     TrainingSet,
     hold_out,
@@ -69,24 +67,28 @@ def test_hold_out_with_an_empty_part_is_an_error(ratio):
         hold_out(golf(), ratio, seed=42)
 
 
+@pytest.mark.parametrize("ratio", [0, 1, -0.5, 1.5])
+def test_hold_out_ratio_outside_0_1_is_an_error(ratio):
+    with pytest.raises(SplitError, match="between 0 and 1"):
+        HoldOut(ratio)
+
+
 def test_without_a_test_set_evaluates_both_trees_on_the_training_set():
     result = run_experiment(stock_market())
 
     assert result.pruned is not None
     assert result.pruned.confidence == 0.25
-    [training] = result.evaluations
-    assert training.evaluated_set == TrainingSet()
-    assert (training.unpruned.cases, training.unpruned.errors) == (10, 0)
-    assert training.pruned is not None
-    assert (training.pruned.cases, training.pruned.errors) == (10, 0)
+    for tree in (result.unpruned, result.pruned):
+        [(evaluated_set, evaluation)] = tree.evaluations
+        assert evaluated_set == TrainingSet()
+        assert (evaluation.cases, evaluation.errors) == (10, 0)
 
 
 def test_no_confidence_level_means_no_pruned_tree():
     result = run_experiment(stock_market(), confidence=None)
 
     assert result.pruned is None
-    assert render_plain(result.unpruned).startswith("a1 = old: down (3.0)")
-    assert [e.pruned for e in result.evaluations] == [None]
+    assert render_plain(result.unpruned.tree).startswith("a1 = old: down (3.0)")
 
 
 def test_confidence_level_sets_how_much_is_pruned():
@@ -97,11 +99,11 @@ def test_confidence_level_sets_how_much_is_pruned():
     assert at_5.pruned is not None
     assert at_5.pruned.confidence == 0.05
     assert render_plain(at_5.pruned.tree) == "Play (14.0/5.0)"
-    assert at_5.evaluations[0].pruned is not None
-    assert at_5.evaluations[0].pruned.errors == 5
+    [(_, on_training)] = at_5.pruned.evaluations
+    assert on_training.errors == 5
     assert at_25.pruned is not None
     assert at_25.pruned.confidence == 0.25
-    assert size(at_25.pruned.tree) == size(at_25.unpruned) == 8
+    assert size(at_25.pruned.tree) == size(at_25.unpruned.tree) == 8
 
 
 def test_build_options_reach_the_tree():
@@ -109,26 +111,24 @@ def test_build_options_reach_the_tree():
         stock_market(), options=BuildOptions(criterion="gain", min_cases=5)
     )
 
-    assert size(result.unpruned) == 1
+    assert size(result.unpruned.tree) == 1
 
 
 def test_test_file_is_evaluated_after_the_training_set(write_table):
     # Case 1 is a training case with its decision flipped: one error.
     path = write_table("old yes swr up\nnew no hwr up\n", name="test.txt")
     training = stock_market()
-    test = load_table(path, like=training)
+    source = FileSource("test.txt", load_table(path, like=training))
 
-    result = run_experiment(training, FileSource("test.txt", test))
+    result = run_experiment(training, source)
 
-    assert [e.evaluated_set for e in result.evaluations] == [
-        TrainingSet(),
-        FileTestSet("test.txt"),
-    ]
-    on_test = result.evaluations[1]
-    assert on_test.pruned is not None
-    for evaluation in (on_test.unpruned, on_test.pruned):
-        assert (evaluation.cases, evaluation.errors) == (2, 1)
-        assert evaluation.confusion["up"] == {"down": 1, "up": 1}
+    assert result.pruned is not None
+    for tree in (result.unpruned, result.pruned):
+        sets = [evaluated_set for evaluated_set, _ in tree.evaluations]
+        assert sets == [TrainingSet(), source]
+        _, on_test = tree.evaluations[1]
+        assert (on_test.cases, on_test.errors) == (2, 1)
+        assert on_test.confusion["up"] == {"down": 1, "up": 1}
 
 
 def test_hold_out_with_a_seed_gives_the_same_experiment_every_run():
@@ -136,19 +136,21 @@ def test_hold_out_with_a_seed_gives_the_same_experiment_every_run():
     second = run_experiment(golf(), HoldOut(0.7, seed=42))
 
     assert first == second
-    training, test = first.evaluations
-    assert training.evaluated_set == TrainingSet()
-    assert training.unpruned.cases == 10
-    assert test.evaluated_set == HoldOutTestSet(seed=42)
-    assert test.unpruned.cases == 4
+    (training, on_training), (test, on_test) = first.unpruned.evaluations
+    assert training == TrainingSet()
+    assert on_training.cases == 10
+    assert test == HoldOut(0.7, seed=42)
+    assert on_test.cases == 4
 
 
 def test_hold_out_without_a_seed_returns_the_seed_it_picked():
     result = run_experiment(golf(), HoldOut(0.7))
 
-    picked = result.evaluations[1].evaluated_set
-    assert isinstance(picked, HoldOutTestSet)
-    assert run_experiment(golf(), HoldOut(0.7, seed=picked.seed)) == result
+    picked, _ = result.unpruned.evaluations[1]
+    assert isinstance(picked, HoldOut)
+    assert isinstance(picked.seed, int)
+    assert picked.ratio == 0.7
+    assert run_experiment(golf(), picked) == result
 
 
 def test_hold_out_that_leaves_a_part_empty_is_an_error():

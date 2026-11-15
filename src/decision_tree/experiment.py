@@ -16,7 +16,8 @@ from decision_tree.tree import Tree
 
 
 class SplitError(ValueError):
-    """A hold-out split would leave the Training Set or the Test Set empty."""
+    """A hold-out ratio is outside (0, 1), or the split would leave the Training
+    Set or the Test Set empty."""
 
 
 @dataclass(frozen=True)
@@ -37,6 +38,10 @@ class HoldOut:
     seed: int | None = None
     """Seed of the shuffle; None picks one at random."""
 
+    def __post_init__(self) -> None:
+        if not 0 < self.ratio < 1:
+            raise SplitError(f"the ratio must be between 0 and 1, not {self.ratio:g}")
+
 
 type TestSource = FileSource | HoldOut | None
 """Where the Test Set comes from; None for no Test Set."""
@@ -47,49 +52,32 @@ class TrainingSet:
     """The Training Set the trees were built from."""
 
 
-@dataclass(frozen=True)
-class FileTestSet:
-    """A Test Set read from `file`."""
-
-    file: str
+type EvaluatedSet = TrainingSet | FileSource | HoldOut
+"""A set a tree was evaluated on. A `HoldOut` here always has its seed."""
 
 
 @dataclass(frozen=True)
-class HoldOutTestSet:
-    """The held-out part of a split made with `seed`."""
-
-    seed: int
-
-
-type EvaluatedSet = TrainingSet | FileTestSet | HoldOutTestSet
-
-
-@dataclass(frozen=True)
-class SetEvaluation:
-    """Both trees evaluated on one set."""
-
-    evaluated_set: EvaluatedSet
-    unpruned: Evaluation
-    pruned: Evaluation | None
-    """None when the Experiment does not prune."""
-
-
-@dataclass(frozen=True)
-class PrunedTree:
-    """A pruned tree and the Confidence Level it was pruned at."""
+class EvaluatedTree:
+    """A tree and its evaluation on each set."""
 
     tree: Tree
+    evaluations: tuple[tuple[EvaluatedSet, Evaluation], ...]
+    """The Training Set first, then the Test Set if there is one."""
+
+
+@dataclass(frozen=True)
+class PrunedTree(EvaluatedTree):
+    """An evaluated pruned tree and the Confidence Level it was pruned at."""
+
     confidence: float
     """The Confidence Level, a fraction in (0, 1]."""
 
 
 @dataclass(frozen=True)
 class ExperimentResult:
-    unpruned: Tree
+    unpruned: EvaluatedTree
     pruned: PrunedTree | None
     """None when the Experiment does not prune."""
-    evaluations: tuple[SetEvaluation, ...]
-    """The Training Set first, then the Test Set if there is one."""
 
 
 def run_experiment(
@@ -104,34 +92,28 @@ def run_experiment(
     set.
 
     With a `HoldOut`, the tree is built from the training part of the split and
-    evaluated on that part and the held-out one. Raises SplitError if the split
-    would leave a part empty.
+    evaluated on that part and the held-out one, labelled with the seed used.
+    Raises SplitError if the split would leave a part empty.
     """
     tests: list[tuple[EvaluatedSet, DecisionTable]] = []
     match test:
-        case FileSource(file, table):
-            tests.append((FileTestSet(file), table))
+        case FileSource(_, table):
+            tests.append((test, table))
         case HoldOut(ratio, given_seed):
             seed = random.randrange(2**32) if given_seed is None else given_seed
             training, held_out = hold_out(training, ratio, seed=seed)
-            tests.append((HoldOutTestSet(seed), held_out))
+            tests.append((HoldOut(ratio, seed), held_out))
     sets = [(TrainingSet(), training), *tests]
 
+    def evaluations(tree: Tree) -> tuple[tuple[EvaluatedSet, Evaluation], ...]:
+        return tuple((label, evaluate(tree, table)) for label, table in sets)
+
     unpruned = build_tree(training, options)
-    pruned = (
-        None
-        if confidence is None
-        else PrunedTree(prune(unpruned, confidence), confidence)
-    )
-    evaluations = tuple(
-        SetEvaluation(
-            evaluated_set,
-            evaluate(unpruned, table),
-            None if pruned is None else evaluate(pruned.tree, table),
-        )
-        for evaluated_set, table in sets
-    )
-    return ExperimentResult(unpruned, pruned, evaluations)
+    pruned = None
+    if confidence is not None:
+        tree = prune(unpruned, confidence)
+        pruned = PrunedTree(tree, evaluations(tree), confidence)
+    return ExperimentResult(EvaluatedTree(unpruned, evaluations(unpruned)), pruned)
 
 
 def hold_out(

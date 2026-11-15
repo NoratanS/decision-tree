@@ -276,10 +276,12 @@ def test_train_bad_evaluation_options_give_one_line_error(options, message):
 
 
 @pytest.mark.parametrize("ratio", ["0", "1", "1.5"])
-def test_train_rejects_a_split_ratio_outside_0_1(ratio):
+def test_train_split_ratio_outside_0_1_gives_one_line_error(ratio):
     result = runner.invoke(app, ["train", STOCK_MARKET, "--split", ratio])
 
-    assert result.exit_code == 2
+    assert result.exit_code == 1
+    assert result.stderr.strip().count("\n") == 0
+    assert "--split: the ratio must be between 0 and 1" in result.stderr
 
 
 def test_test_set_with_another_column_count_gives_one_line_error(write_table):

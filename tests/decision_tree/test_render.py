@@ -3,11 +3,12 @@ import pytest
 import decision_tree.render
 from decision_tree.evaluate import Classification, Evaluation
 from decision_tree.experiment import (
+    EvaluatedSet,
+    EvaluatedTree,
     ExperimentResult,
-    FileTestSet,
-    HoldOutTestSet,
+    FileSource,
+    HoldOut,
     PrunedTree,
-    SetEvaluation,
     TrainingSet,
 )
 from decision_tree.render import (
@@ -21,6 +22,7 @@ from decision_tree.render import (
     render_blocks_plain,
     render_plain,
 )
+from decision_tree.table import DecisionTable
 from decision_tree.tree import (
     ClassDistribution,
     DiscreteTest,
@@ -133,7 +135,7 @@ def test_thresholds_print_without_a_needless_decimal_point(threshold, text):
 
 def outline(tree: Tree) -> tuple[TreeRow, ...]:
     """The rows of the unpruned tree's block in an Experiment report."""
-    [block] = experiment_blocks(ExperimentResult(tree, None, ()))
+    [block] = experiment_blocks(ExperimentResult(EvaluatedTree(tree, ()), None))
     assert isinstance(block, TreeBlock)
     return block.rows
 
@@ -281,12 +283,20 @@ def evaluation(yes: tuple[int, int], no: tuple[int, int]) -> Evaluation:
     )
 
 
+def file_source(name: str) -> FileSource:
+    """A Test Set source named `name`; the report shows only the name."""
+    return FileSource(name, DecisionTable((), "d", (), (), ()))
+
+
+def unpruned_result(*evaluations: tuple[EvaluatedSet, Evaluation]) -> ExperimentResult:
+    return ExperimentResult(EvaluatedTree(SPLIT_TREE, evaluations), None)
+
+
+ON_TRAINING_UNPRUNED = (TrainingSet(), evaluation((3, 0), (1, 2)))
+
+
 def test_experiment_without_pruning_shows_one_tree_and_its_evaluation():
-    result = ExperimentResult(
-        SPLIT_TREE,
-        None,
-        (SetEvaluation(TrainingSet(), evaluation((3, 0), (1, 2)), None),),
-    )
+    result = unpruned_result(ON_TRAINING_UNPRUNED)
 
     assert render_blocks_plain(experiment_blocks(result)) == (
         "Unpruned tree (size 3):\n"
@@ -301,11 +311,7 @@ def test_experiment_without_pruning_shows_one_tree_and_its_evaluation():
 
 
 def test_confusion_matrix_cells_are_correct_wrong_or_empty():
-    result = ExperimentResult(
-        SPLIT_TREE,
-        None,
-        (SetEvaluation(TrainingSet(), evaluation((3, 0), (1, 2)), None),),
-    )
+    result = unpruned_result(ON_TRAINING_UNPRUNED)
 
     matrix = experiment_blocks(result)[-1]
 
@@ -321,13 +327,18 @@ def plain_report(result: ExperimentResult) -> str:
     return render_blocks_plain(experiment_blocks(result))
 
 
-def pruned_result(*evaluations: SetEvaluation, confidence=0.25) -> ExperimentResult:
-    return ExperimentResult(SPLIT_TREE, PrunedTree(ONE_LEAF, confidence), evaluations)
+def pruned_result(
+    *sets: tuple[EvaluatedSet, Evaluation, Evaluation], confidence=0.25
+) -> ExperimentResult:
+    """SPLIT_TREE pruned to ONE_LEAF; each set with the unpruned and the pruned
+    tree's evaluation."""
+    return ExperimentResult(
+        EvaluatedTree(SPLIT_TREE, tuple((s, unpruned) for s, unpruned, _ in sets)),
+        PrunedTree(ONE_LEAF, tuple((s, pruned) for s, _, pruned in sets), confidence),
+    )
 
 
-ON_TRAINING = SetEvaluation(
-    TrainingSet(), evaluation((3, 0), (1, 2)), evaluation((4, 0), (2, 0))
-)
+ON_TRAINING = (TrainingSet(), evaluation((3, 0), (1, 2)), evaluation((4, 0), (2, 0)))
 PRUNED_ON_TRAINING = (
     "Unpruned tree (size 3):\n"
     "a1 = x: yes (3.0)\n"
@@ -363,22 +374,24 @@ def test_confidence_level_is_shown_in_percent(confidence, text):
     ("evaluated_set", "name"),
     [
         (TrainingSet(), "Training Set"),
-        (FileTestSet("data/test.txt"), "Test Set (data/test.txt)"),
-        (HoldOutTestSet(seed=42), "Test Set (hold-out, --seed 42)"),
+        (file_source("data/test.txt"), "Test Set (data/test.txt)"),
+        (HoldOut(0.7, seed=42), "Test Set (hold-out, --seed 42)"),
     ],
 )
 def test_evaluation_heading_names_where_the_set_comes_from(evaluated_set, name):
-    on_set = SetEvaluation(evaluated_set, evaluation((3, 0), (1, 2)), None)
+    on_set = (evaluated_set, evaluation((3, 0), (1, 2)))
 
-    [_, matrix] = experiment_blocks(ExperimentResult(SPLIT_TREE, None, (on_set,)))
+    [_, matrix] = experiment_blocks(unpruned_result(on_set))
 
     assert isinstance(matrix, TableBlock)
     assert matrix.heading == f"Unpruned tree on {name}: 6 cases, 1 error (16.7%)"
 
 
 def test_experiment_with_a_test_file_evaluates_both_trees_on_it_after_training():
-    on_test = SetEvaluation(
-        FileTestSet("test.txt"), evaluation((1, 1), (0, 0)), evaluation((2, 0), (0, 0))
+    on_test = (
+        file_source("test.txt"),
+        evaluation((1, 1), (0, 0)),
+        evaluation((2, 0), (0, 0)),
     )
 
     assert plain_report(pruned_result(ON_TRAINING, on_test)) == (
@@ -397,12 +410,8 @@ def test_experiment_with_a_test_file_evaluates_both_trees_on_it_after_training()
 
 
 def test_experiment_with_a_hold_out_names_the_seed_of_the_split():
-    on_test = SetEvaluation(HoldOutTestSet(42), evaluation((0, 1), (0, 1)), None)
-    result = ExperimentResult(
-        SPLIT_TREE,
-        None,
-        (SetEvaluation(TrainingSet(), evaluation((3, 0), (1, 2)), None), on_test),
-    )
+    on_test = (HoldOut(0.7, seed=42), evaluation((0, 1), (0, 1)))
+    result = unpruned_result(ON_TRAINING_UNPRUNED, on_test)
 
     assert render_blocks_plain(experiment_blocks(result)) == (
         "Unpruned tree (size 3):\n"
