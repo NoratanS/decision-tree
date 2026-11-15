@@ -3,6 +3,8 @@ R5.6, R7)."""
 
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
+from functools import cached_property
+from types import MappingProxyType
 from typing import ClassVar
 
 
@@ -90,6 +92,12 @@ class Leaf:
     def probabilities(self) -> ClassDistribution:
         """This Leaf's Class Distribution as probabilities; an empty Leaf (no
         training weight) gives `decision` probability 1 (spec R7)."""
+        return self._probabilities
+
+    @cached_property
+    def _probabilities(self) -> ClassDistribution:
+        """Computed once per Leaf: a Case that goes down every branch of a Node
+        with thousands of them reaches as many Leaves (ticket 36)."""
         distribution = self.distribution
         if distribution.total <= 0:
             classes = distribution.classes
@@ -131,7 +139,12 @@ class DiscreteTest:
         """The branch for `value`; None for a Missing Value or a value never
         seen in training. (A number is never a discrete value; the type matches
         `ThresholdTest.route`.)"""
-        return value if value in self.values else None
+        return value if value in self._known else None
+
+    @cached_property
+    def _known(self) -> frozenset[str]:
+        """`values` as a set: an attribute may have thousands (ticket 36)."""
+        return frozenset(self.values)
 
 
 @dataclass(frozen=True)
@@ -164,9 +177,38 @@ type Test = DiscreteTest | ThresholdTest
 @dataclass(frozen=True)
 class Node:
     test: Test
-    branches: dict[str, Tree]
-    """One subtree per branch key of `test`, in the same order."""
+    branches: Mapping[str, Tree]
+    """One subtree per branch key of `test`, in the same order. Kept as a
+    read-only copy: `shares` and `leaf_mixture` are computed from it once."""
     distribution: ClassDistribution
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "branches", MappingProxyType(dict(self.branches)))
+
+    @cached_property
+    def shares(self) -> tuple[tuple[float, Tree], ...]:
+        """Each branch with training weight, with its Branch Share (its share
+        of the weight of all branches), in branch order.
+
+        Computed once per Node: a test on an attribute with thousands of
+        values has as many branches, most of them empty, and classification
+        reads this for every Case that goes down every branch (ticket 36).
+        """
+        children = self.branches.values()
+        total = sum(child.distribution.total for child in children)
+        shares = ((child.distribution.total / total, child) for child in children)
+        return tuple((share, child) for share, child in shares if share)
+
+    @cached_property
+    def leaf_mixture(self) -> ClassDistribution | None:
+        """The Class Distribution of a Case that goes down every branch, when
+        every branch in `shares` is a Leaf; None when one is a Node.
+
+        It is then the same for every Case, so it is computed once.
+        """
+        if not all(isinstance(child, Leaf) for _, child in self.shares):
+            return None
+        return _mix(self, (child.probabilities() for _, child in self.shares))
 
 
 type Tree = Node | Leaf
@@ -198,12 +240,19 @@ def classify(tree: Tree, case: Sequence[str | None]) -> ClassDistribution:
 def _combine_branches(node: Node, case: Sequence[str | None]) -> ClassDistribution:
     """Classify `case` down every branch of `node`; sum the distributions, each
     weighted by its branch's share of the training weight."""
-    total = sum(child.distribution.total for child in node.branches.values())
+    mixture = node.leaf_mixture
+    if mixture is None:
+        mixture = _mix(node, (classify(child, case) for _, child in node.shares))
+    return mixture
+
+
+def _mix(node: Node, distributions: Iterable[ClassDistribution]) -> ClassDistribution:
+    """Sum of `distributions`, one per branch in `node.shares`, each weighted by
+    its branch's share."""
     combined = [0.0] * len(node.distribution)
-    for child in node.branches.values():
-        if share := child.distribution.total / total:
-            # Every Class Distribution in a tree lists the same classes in
-            # the same order.
-            for k, probability in enumerate(classify(child, case).weights):
-                combined[k] += share * probability
+    for (share, _), distribution in zip(node.shares, distributions, strict=True):
+        # Every Class Distribution in a tree lists the same classes in the
+        # same order.
+        for k, probability in enumerate(distribution.weights):
+            combined[k] += share * probability
     return ClassDistribution(node.distribution.classes, tuple(combined))

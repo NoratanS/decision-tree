@@ -93,6 +93,10 @@ _Avoid_: split point, cut point
 How much of a case is present at a point in the tree; 1 for a whole case, a fraction when a case with a missing value is spread across several branches.
 _Avoid_: sample weight, fractional case
 
+**Branch Share**:
+A branch's fraction of its Node's training weight; a case sent down every branch of a Node (missing or unseen value) gets the branches' Class Distributions summed, each weighted by its Branch Share.
+_Avoid_: branch weight, branch probability
+
 **Class Distribution**:
 The weight of each decision class among the cases reaching a leaf, normalised to probabilities when classifying.
 _Avoid_: class probabilities, scores

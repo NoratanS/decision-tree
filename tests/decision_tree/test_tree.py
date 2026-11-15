@@ -118,6 +118,61 @@ def test_missing_value_combines_every_branch_weighted_by_its_size():
     assert classify(tree, (None,)) == ClassDistribution(("yes", "no"), (0.375, 0.625))
 
 
+def test_node_shares_skip_branches_without_training_weight():
+    yes_no = ("yes", "no")
+    x = Leaf("yes", ClassDistribution(yes_no, (3.0, 1.0)))
+    y = Node(
+        ThresholdTest("a2", 1, 5.0),
+        {
+            "<=": Leaf("no", ClassDistribution(yes_no, (0.0, 3.0))),
+            ">": Leaf("yes", ClassDistribution(yes_no, (1.0, 0.0))),
+        },
+        ClassDistribution(yes_no, (1.0, 3.0)),
+    )
+    z = Leaf("yes", ClassDistribution(yes_no, (0.0, 0.0)))
+    tree = Node(
+        DiscreteTest("a1", 0, ("x", "y", "z")),
+        {"x": x, "y": y, "z": z},
+        ClassDistribution(yes_no, (4.0, 4.0)),
+    )
+
+    assert tree.shares == ((0.5, x), (0.5, y))
+    # A Node among the branches: the Case's own values still matter below it.
+    assert tree.leaf_mixture is None
+    assert classify(tree, (None, 9.0)) == ClassDistribution(yes_no, (0.875, 0.125))
+    assert classify(tree, (None, 1.0)) == ClassDistribution(yes_no, (0.375, 0.625))
+
+
+def test_leaf_mixture_is_the_distribution_of_a_case_down_every_leaf():
+    tree = Node(
+        DiscreteTest("a1", 0, ("x", "y", "z")),
+        {
+            "x": Leaf("yes", ClassDistribution(("yes", "no"), (3.0, 1.0))),
+            "y": Leaf("no", ClassDistribution(("yes", "no"), (0.0, 4.0))),
+            "z": Leaf("yes", ClassDistribution(("yes", "no"), (0.0, 0.0))),
+        },
+        ClassDistribution(("yes", "no"), (3.0, 5.0)),
+    )
+
+    assert tree.leaf_mixture == ClassDistribution(("yes", "no"), (0.375, 0.625))
+    assert classify(tree, ("unseen",)) == tree.leaf_mixture
+
+
+def test_node_branches_cannot_change_after_construction():
+    # `shares` and `leaf_mixture` are computed once, so the branches stay fixed.
+    yes_no = ("yes", "no")
+    x = Leaf("yes", ClassDistribution(yes_no, (3.0, 1.0)))
+    branches = {"x": x}
+    tree = Node(DiscreteTest("a1", 0, ("x",)), branches, x.distribution)
+
+    branches["x"] = Leaf("no", ClassDistribution(yes_no, (0.0, 4.0)))
+    with pytest.raises(TypeError):
+        tree.branches["x"] = branches["x"]  # type: ignore[index]
+
+    assert tree.branches == {"x": x}
+    assert tree.shares == ((1.0, x),)
+
+
 OUTLOOK = DiscreteTest("outlook", 0, ("sunny", "overcast", "rain"))
 HUMIDITY = ThresholdTest("humidity", 2, 75.0)
 
