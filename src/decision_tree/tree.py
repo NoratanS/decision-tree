@@ -27,9 +27,9 @@ class Leaf:
 # discrete value never seen in training) goes down every branch of the Node,
 # weighted by each branch's share of the weight (spec R5.5, R7). As in C4.5:
 # growth shares the Case's weight by the known weight of each branch
-# (`builder._subsets`, C4.5's `Group` in `build.c`); classification shares the
-# branch's Class Distribution by its training weight, `child.total`
-# (`_combine_branches`, C4.5's `Classify` in `classify.c`).
+# (`splitting.CandidateTest.branches`, C4.5's `Group` in `build.c`);
+# classification shares the branch's Class Distribution by its training weight,
+# `child.total` (`_combine_branches`, C4.5's `Classify` in `classify.c`).
 
 
 @dataclass(frozen=True)
