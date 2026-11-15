@@ -1,5 +1,6 @@
 import pytest
 
+import decision_tree.render
 from decision_tree.evaluate import Classification, Evaluation
 from decision_tree.experiment import (
     ExperimentResult,
@@ -13,14 +14,12 @@ from decision_tree.render import (
     BranchText,
     LeafText,
     TableBlock,
+    TreeBlock,
     TreeRow,
     classification_blocks,
     experiment_blocks,
-    render_classification_plain,
-    render_experiment_plain,
+    render_blocks_plain,
     render_plain,
-    set_name,
-    tree_outline,
 )
 from decision_tree.tree import (
     ClassDistribution,
@@ -28,7 +27,33 @@ from decision_tree.tree import (
     Leaf,
     Node,
     ThresholdTest,
+    Tree,
 )
+
+
+def test_render_exposes_only_the_blocks_their_builders_and_the_plain_adapter():
+    defined_here = {
+        name
+        for name, value in vars(decision_tree.render).items()
+        if not name.startswith("_")
+        and getattr(value, "__module__", None) == "decision_tree.render"
+    }
+
+    assert defined_here == {
+        "Block",
+        "TreeBlock",
+        "TreeRow",
+        "BranchText",
+        "LeafText",
+        "TableBlock",
+        "Column",
+        "Cell",
+        "stats_blocks",
+        "experiment_blocks",
+        "classification_blocks",
+        "render_blocks_plain",
+        "render_plain",
+    }
 
 
 def test_leaf_without_errors_shows_its_weight():
@@ -106,6 +131,13 @@ def test_thresholds_print_without_a_needless_decimal_point(threshold, text):
     assert render_plain(tree).startswith(f"a1 <= {text} : ")
 
 
+def outline(tree: Tree) -> tuple[TreeRow, ...]:
+    """The rows of the unpruned tree's block in an Experiment report."""
+    [block] = experiment_blocks(ExperimentResult(tree, None, ()))
+    assert isinstance(block, TreeBlock)
+    return block.rows
+
+
 def test_outline_of_a_discrete_tree_gives_one_row_per_branch_with_its_depth():
     inner = Node(
         DiscreteTest("a2", 1, ("p", "q")),
@@ -121,7 +153,7 @@ def test_outline_of_a_discrete_tree_gives_one_row_per_branch_with_its_depth():
         ClassDistribution(("yes", "no"), (3.0, 4.0)),
     )
 
-    assert tree_outline(tree) == (
+    assert outline(tree) == (
         TreeRow(0, BranchText("a1", "=", "x"), None),
         TreeRow(1, BranchText("a2", "=", "p"), LeafText("yes", "(2.0)")),
         TreeRow(1, BranchText("a2", "=", "q"), LeafText("no", "(2.0/1.0)")),
@@ -141,7 +173,7 @@ def test_outline_of_a_threshold_test_has_a_row_per_sign():
         ClassDistribution(("Play", "Don't Play"), (2.0, 3.0)),
     )
 
-    assert tree_outline(tree) == (
+    assert outline(tree) == (
         TreeRow(0, BranchText("humidity", "<=", "75"), LeafText("Play", "(2.0)")),
         TreeRow(0, BranchText("humidity", ">", "75"), LeafText("Don't Play", "(3.0)")),
     )
@@ -150,7 +182,7 @@ def test_outline_of_a_threshold_test_has_a_row_per_sign():
 def test_outline_of_a_single_leaf_is_one_row_without_a_branch():
     leaf = Leaf("yes", ClassDistribution(("yes", "no"), (4.0, 2.0)))
 
-    assert tree_outline(leaf) == (TreeRow(0, None, LeafText("yes", "(6.0/2.0)")),)
+    assert outline(leaf) == (TreeRow(0, None, LeafText("yes", "(6.0/2.0)")),)
 
 
 GOLF_CLASSES = ("Play", "Don't Play")
@@ -166,7 +198,7 @@ def test_classification_shows_each_case_with_its_class_and_distribution():
         decisions=None,
     )
 
-    assert render_classification_plain(result) == (
+    assert render_blocks_plain(classification_blocks(result)) == (
         "case  predicted    Play  Don't Play\n"
         "   1  Don't Play  0.400       0.600\n"
         "   2  Play        1.000       0.000"
@@ -184,7 +216,7 @@ def test_classification_with_decisions_marks_wrong_predictions_and_gives_accurac
         decisions=("Play", "Play", "Play"),
     )
 
-    assert render_classification_plain(result) == (
+    assert render_blocks_plain(classification_blocks(result)) == (
         "case  predicted    Play  Don't Play  actual\n"
         "   1  Don't Play  0.400       0.600  Play    wrong\n"
         "   2  Play        1.000       0.000  Play\n"
@@ -229,18 +261,6 @@ def test_classification_without_decisions_has_no_roles():
     assert roles(table) == [[None, None, None, None]]
 
 
-@pytest.mark.parametrize(
-    ("evaluated_set", "name"),
-    [
-        (TrainingSet(), "Training Set"),
-        (FileTestSet("data/test.txt"), "Test Set (data/test.txt)"),
-        (HoldOutTestSet(seed=42), "Test Set (hold-out, --seed 42)"),
-    ],
-)
-def test_set_name_describes_where_the_set_comes_from(evaluated_set, name):
-    assert set_name(evaluated_set) == name
-
-
 # A two-Leaf tree on `a1`, and the single Leaf it prunes to.
 SPLIT_TREE = Node(
     DiscreteTest("a1", 0, ("x", "y")),
@@ -268,7 +288,7 @@ def test_experiment_without_pruning_shows_one_tree_and_its_evaluation():
         (SetEvaluation(TrainingSet(), evaluation((3, 0), (1, 2)), None),),
     )
 
-    assert render_experiment_plain(result) == (
+    assert render_blocks_plain(experiment_blocks(result)) == (
         "Unpruned tree (size 3):\n"
         "a1 = x: yes (3.0)\n"
         "a1 = y: no (3.0/1.0)\n"
@@ -295,6 +315,10 @@ def test_confusion_matrix_cells_are_correct_wrong_or_empty():
         [None, "correct", "empty"],
         [None, "wrong", "correct"],
     ]
+
+
+def plain_report(result: ExperimentResult) -> str:
+    return render_blocks_plain(experiment_blocks(result))
 
 
 def pruned_result(*evaluations: SetEvaluation, confidence=0.25) -> ExperimentResult:
@@ -325,14 +349,31 @@ PRUNED_ON_TRAINING = (
 
 
 def test_experiment_with_pruning_shows_both_trees_then_both_evaluations():
-    assert render_experiment_plain(pruned_result(ON_TRAINING)) == PRUNED_ON_TRAINING
+    assert plain_report(pruned_result(ON_TRAINING)) == PRUNED_ON_TRAINING
 
 
 @pytest.mark.parametrize(("confidence", "text"), [(0.07, "7"), (0.125, "12.5")])
 def test_confidence_level_is_shown_in_percent(confidence, text):
-    report = render_experiment_plain(pruned_result(ON_TRAINING, confidence=confidence))
+    report = plain_report(pruned_result(ON_TRAINING, confidence=confidence))
 
     assert f"Pruned tree (size 1, Confidence Level {text}%):\n" in report
+
+
+@pytest.mark.parametrize(
+    ("evaluated_set", "name"),
+    [
+        (TrainingSet(), "Training Set"),
+        (FileTestSet("data/test.txt"), "Test Set (data/test.txt)"),
+        (HoldOutTestSet(seed=42), "Test Set (hold-out, --seed 42)"),
+    ],
+)
+def test_evaluation_heading_names_where_the_set_comes_from(evaluated_set, name):
+    on_set = SetEvaluation(evaluated_set, evaluation((3, 0), (1, 2)), None)
+
+    [_, matrix] = experiment_blocks(ExperimentResult(SPLIT_TREE, None, (on_set,)))
+
+    assert isinstance(matrix, TableBlock)
+    assert matrix.heading == f"Unpruned tree on {name}: 6 cases, 1 error (16.7%)"
 
 
 def test_experiment_with_a_test_file_evaluates_both_trees_on_it_after_training():
@@ -340,7 +381,7 @@ def test_experiment_with_a_test_file_evaluates_both_trees_on_it_after_training()
         FileTestSet("test.txt"), evaluation((1, 1), (0, 0)), evaluation((2, 0), (0, 0))
     )
 
-    assert render_experiment_plain(pruned_result(ON_TRAINING, on_test)) == (
+    assert plain_report(pruned_result(ON_TRAINING, on_test)) == (
         PRUNED_ON_TRAINING + "\n"
         "\n"
         "Unpruned tree on Test Set (test.txt): 2 cases, 1 error (50.0%)\n"
@@ -363,7 +404,7 @@ def test_experiment_with_a_hold_out_names_the_seed_of_the_split():
         (SetEvaluation(TrainingSet(), evaluation((3, 0), (1, 2)), None), on_test),
     )
 
-    assert render_experiment_plain(result) == (
+    assert render_blocks_plain(experiment_blocks(result)) == (
         "Unpruned tree (size 3):\n"
         "a1 = x: yes (3.0)\n"
         "a1 = y: no (3.0/1.0)\n"

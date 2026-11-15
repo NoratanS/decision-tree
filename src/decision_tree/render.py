@@ -32,26 +32,26 @@ from decision_tree.tree import (
 
 def render_plain(tree: Tree) -> str:
     """The tree as C4.5 prints it, one test per line, without a final newline."""
-    return _outline_plain(tree_outline(tree))
+    return _outline_plain(_tree_outline(tree))
 
 
-def tree_name(*, pruned: bool) -> str:
+def _tree_name(*, pruned: bool) -> str:
     """`Pruned tree` or `Unpruned tree`."""
     return "Pruned tree" if pruned else "Unpruned tree"
 
 
-def tree_heading(tree: Tree, *, pruned_at: float | None = None) -> str:
+def _tree_heading(tree: Tree, *, pruned_at: float | None = None) -> str:
     """`Unpruned tree (size 8)`; with `pruned_at` (a fraction), the Confidence
     Level in percent, `Pruned tree (size 5, Confidence Level 25%)`."""
-    name = tree_name(pruned=pruned_at is not None)
+    name = _tree_name(pruned=pruned_at is not None)
     if pruned_at is None:
         return f"{name} (size {size(tree)})"
     # Rounded so that 0.07 shows as 7, not 7.000000000000001.
-    percent = number_text(round(pruned_at * 100, 10))
+    percent = _number_text(round(pruned_at * 100, 10))
     return f"{name} (size {size(tree)}, Confidence Level {percent}%)"
 
 
-def number_text(number: float) -> str:
+def _number_text(number: float) -> str:
     """Shortest exact text for a number: `75`, not `75.0`."""
     if number.is_integer() and abs(number) < 1e16:
         return str(int(number))
@@ -89,7 +89,7 @@ class TreeRow:
     leaf: LeafText | None
 
 
-def tree_outline(tree: Tree) -> tuple[TreeRow, ...]:
+def _tree_outline(tree: Tree) -> tuple[TreeRow, ...]:
     """The tree as outline rows, depth first, branches in the Node's order."""
     if isinstance(tree, Leaf):
         return (TreeRow(0, None, _leaf_text(tree)),)
@@ -112,7 +112,7 @@ def _branch_text(node: Node, value: str) -> BranchText:
     # A Threshold test's branch key is its comparison sign.
     match node.test, value:
         case ThresholdTest(attribute, _, threshold), "<=" | ">" as sign:
-            return BranchText(attribute, sign, number_text(threshold))
+            return BranchText(attribute, sign, _number_text(threshold))
         case DiscreteTest(attribute), _:
             return BranchText(attribute, "=", value)
     raise ValueError(f"{value!r} is not a branch of {node.test}")
@@ -151,14 +151,13 @@ class Column:
     plain_heading: str | None = None
 
 
-type Role = Literal["correct", "wrong", "empty"] | None
-"""What a cell means: a correct or wrong prediction, or an empty count."""
-
-
 @dataclass(frozen=True)
 class Cell:
+    """A table cell. `role` is what it means: a correct or wrong prediction, or
+    an empty count."""
+
     text: str
-    role: Role = None
+    role: Literal["correct", "wrong", "empty"] | None = None
 
 
 @dataclass(frozen=True)
@@ -179,20 +178,20 @@ class TableBlock:
 def stats_blocks(stats: TableStats) -> list[TableBlock]:
     """One count table per attribute, then the Decision Attribute's."""
     blocks = [
-        _counts_table(attribute_heading(attribute), "Value", attribute.counts)
+        _counts_table(_attribute_heading(attribute), "Value", attribute.counts)
         for attribute in stats.attributes
     ]
-    blocks.append(_counts_table(decision_heading(stats), "Class", stats.class_counts))
+    blocks.append(_counts_table(_decision_heading(stats), "Class", stats.class_counts))
     return blocks
 
 
-def attribute_heading(attribute: AttributeStats) -> str:
+def _attribute_heading(attribute: AttributeStats) -> str:
     """e.g. `a1 (discrete): 3 values, 0 missing`."""
     values = _plural(attribute.distinct, "value", "values")
     return f"{attribute.name} ({attribute.kind}): {values}, {attribute.missing} missing"
 
 
-def decision_heading(stats: TableStats) -> str:
+def _decision_heading(stats: TableStats) -> str:
     """e.g. `d (decision): 2 classes`."""
     classes = _plural(len(stats.class_counts), "class", "classes")
     return f"{stats.decision} (decision): {classes}"
@@ -211,7 +210,7 @@ def _plural(count: int, singular: str, plural: str) -> str:
     return f"{count} {singular if count == 1 else plural}"
 
 
-def set_name(evaluated_set: EvaluatedSet) -> str:
+def _set_name(evaluated_set: EvaluatedSet) -> str:
     """`Training Set`, `Test Set (FILE)` or `Test Set (hold-out, --seed N)`."""
     match evaluated_set:
         case TrainingSet():
@@ -222,11 +221,11 @@ def set_name(evaluated_set: EvaluatedSet) -> str:
             return f"Test Set (hold-out, --seed {seed})"
 
 
-def evaluation_heading(set_name: str, result: Evaluation) -> str:
-    """e.g. `Training Set: 10 cases, 1 error (10.0%)` for `set_name` `Training Set`."""
+def _evaluation_heading(label: str, result: Evaluation) -> str:
+    """e.g. `Training Set: 10 cases, 1 error (10.0%)` for `label` `Training Set`."""
     cases = _plural(result.cases, "case", "cases")
     errors = _plural(result.errors, "error", "errors")
-    return f"{set_name}: {cases}, {errors} ({result.error_rate:.1%})"
+    return f"{label}: {cases}, {errors} ({result.error_rate:.1%})"
 
 
 def _confusion_table(heading: str, result: Evaluation) -> TableBlock:
@@ -270,30 +269,25 @@ type Block = TreeBlock | TableBlock
 
 
 def _tree_block(heading: str, tree: Tree) -> TreeBlock:
-    return TreeBlock(heading, tree_outline(tree))
+    return TreeBlock(heading, _tree_outline(tree))
 
 
 def experiment_blocks(result: ExperimentResult) -> list[Block]:
     """The report of an Experiment in order: the unpruned tree, the pruned tree
     if any, then for each set the unpruned tree's evaluation and the pruned
     tree's if any."""
-    blocks: list[Block] = [_tree_block(tree_heading(result.unpruned), result.unpruned)]
+    blocks: list[Block] = [_tree_block(_tree_heading(result.unpruned), result.unpruned)]
     if result.pruned is not None:
         tree, confidence = result.pruned.tree, result.pruned.confidence
-        blocks.append(_tree_block(tree_heading(tree, pruned_at=confidence), tree))
+        blocks.append(_tree_block(_tree_heading(tree, pruned_at=confidence), tree))
     for on_set in result.evaluations:
-        name = set_name(on_set.evaluated_set)
+        name = _set_name(on_set.evaluated_set)
         for pruned, evaluation in ((False, on_set.unpruned), (True, on_set.pruned)):
             if evaluation is not None:
-                label = f"{tree_name(pruned=pruned)} on {name}"
-                heading = evaluation_heading(label, evaluation)
+                label = f"{_tree_name(pruned=pruned)} on {name}"
+                heading = _evaluation_heading(label, evaluation)
                 blocks.append(_confusion_table(heading, evaluation))
     return blocks
-
-
-def render_experiment_plain(result: ExperimentResult) -> str:
-    """The `train` report as plain text; no final newline."""
-    return render_blocks_plain(experiment_blocks(result))
 
 
 def classification_blocks(result: Classification) -> list[TableBlock]:
@@ -329,11 +323,6 @@ def classification_blocks(result: Classification) -> list[TableBlock]:
         )
     footer = None if result.evaluation is None else _accuracy_text(result.evaluation)
     return [TableBlock(None, tuple(columns), tuple(rows), footer=footer)]
-
-
-def render_classification_plain(result: Classification) -> str:
-    """The `classify` table as plain text; no final newline."""
-    return render_blocks_plain(classification_blocks(result))
 
 
 def _accuracy_text(result: Evaluation) -> str:
