@@ -714,3 +714,53 @@ def test_stats_prints_decimal_comma_numbers_normalised(write_table):
     assert result.exit_code == 0, result.output
     assert "a (continuous): 2 values" in result.stdout
     assert "  1.5  1" in result.stdout
+
+
+# File format robustness (ticket 37): a constant column and a column with no
+# known value load as attributes but are never chosen for a split.
+USELESS_COLUMNS = "x,?,old,up\nx,?,new,down\nx,?,old,up\nx,?,new,down\n"
+
+
+def test_constant_and_entirely_missing_columns_are_never_chosen(write_table):
+    result = runner.invoke(app, ["train", str(write_table(USELESS_COLUMNS))])
+
+    assert result.exit_code == 0, result.output
+    assert unpruned_tree(result.stdout).startswith(
+        "a3 = old: up (2.0)\na3 = new: down (2.0)\n"
+    )
+
+
+def test_stats_lists_constant_and_entirely_missing_columns(write_table):
+    result = runner.invoke(app, ["stats", str(write_table(USELESS_COLUMNS))])
+
+    assert result.exit_code == 0, result.output
+    assert "a1 (discrete): 1 value, 0 missing\n  x  4\n" in result.stdout
+    assert "a2 (discrete): 0 values, 4 missing\n" in result.stdout
+
+
+def test_train_on_one_case_builds_a_one_leaf_tree(write_table):
+    result = runner.invoke(app, ["train", str(write_table("old,yes,up\n"))])
+
+    assert result.exit_code == 0, result.output
+    assert "Unpruned tree (size 1):\nup (1.0)\n" in result.stdout
+    assert "Pruned tree (size 1, Confidence Level 25%):\nup (1.0)\n" in result.stdout
+
+
+def test_train_on_a_trailing_separator_file_uses_the_second_to_last_column(
+    write_table,
+):
+    path = write_table("x,old,up,\nx,new,down,\nx,old,up,\nx,new,down,\n")
+
+    result = runner.invoke(app, ["train", str(path)])
+
+    assert result.exit_code == 0, result.output
+    assert unpruned_tree(result.stdout).startswith(
+        "a2 = old: up (2.0)\na2 = new: down (2.0)\n"
+    )
+
+
+def test_train_on_a_single_class_table_builds_a_one_leaf_tree(write_table):
+    result = runner.invoke(app, ["train", str(write_table("old,yes,up\nnew,no,up\n"))])
+
+    assert result.exit_code == 0, result.output
+    assert "Unpruned tree (size 1):\nup (2.0)\n" in result.stdout

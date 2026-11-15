@@ -1084,3 +1084,135 @@ def test_decimal_comma_values_win_over_a_wider_comma_split(write_table):
 
     assert table.cases == (("1.5",), ("3.5",))
     assert table.decisions == ("2,5", "4,5")
+
+
+# File format robustness (ticket 37): quirks the instructor's datasets may have.
+
+
+@pytest.mark.parametrize("header", [False, True], ids=["no header", "header"])
+def test_trailing_separator_on_every_line_is_ignored(write_table, header):
+    text = "age,income,class,\n" if header else ""
+    path = write_table(text + "old,1,yes,\nnew,2,no,\n")
+
+    table = load_table(path, ReadOptions(header=header))
+
+    assert len(table.attributes) == 2
+    assert table.cases == (("old", "1"), ("new", "2"))
+    assert table.decisions == ("yes", "no")
+
+
+def test_trailing_separator_is_kept_when_dropping_it_leaves_too_few_columns(
+    write_table,
+):
+    path = write_table("yes,\nno,\n")
+
+    with pytest.raises(TableError, match=r"line 1: the decision is missing \(''"):
+        load_table(path)
+
+
+def test_empty_last_cell_on_some_lines_only_is_a_missing_decision(write_table):
+    path = write_table("old,1,yes\nnew,2,\nmid,3,no\n")
+
+    with pytest.raises(TableError, match="line 2: the decision is missing"):
+        load_table(path)
+
+
+def test_empty_last_cell_on_some_lines_names_the_first_such_line(write_table):
+    path = write_table("old,1,yes\nnew,2,\nmid,3,\n")
+
+    with pytest.raises(TableError, match="line 2: the decision is missing"):
+        load_table(path)
+
+
+def test_quoted_empty_last_cell_is_not_a_trailing_separator(write_table):
+    path = write_table('old,1,yes,""\nnew,2,no,""\n')
+
+    with pytest.raises(TableError, match="line 1: the decision is missing"):
+        load_table(path)
+
+
+def test_empty_last_column_is_an_attribute_when_the_decision_is_elsewhere(
+    write_table,
+):
+    path = write_table("yes,old,\nno,new,\n")
+
+    table = load_table(path, ReadOptions(decision="a1"))
+
+    assert table.attributes == ("a2", "a3")
+    assert table.cases == (("old", None), ("new", None))
+    assert table.decisions == ("yes", "no")
+
+
+def test_cases_keep_an_entirely_missing_last_attribute(write_table):
+    training = load_table(write_table("old,1,yes\nnew,2,no\n", name="t.txt"))
+
+    cases = load_cases(write_table("mid,\nold,\n"), like=training)
+
+    assert cases.cases == (("mid", None), ("old", None))
+    assert cases.decisions is None
+
+
+def test_cases_with_a_trailing_separator_and_no_decision(write_table):
+    training = load_table(write_table("old,1,yes\nnew,2,no\n", name="t.txt"))
+
+    cases = load_cases(write_table("mid,3,\nold,4,\n"), like=training)
+
+    assert cases.cases == (("mid", "3"), ("old", "4"))
+    assert cases.decisions is None
+
+
+def test_test_set_with_an_empty_decision_on_every_line_names_the_line(write_table):
+    training = load_table(write_table("old,1,yes\nnew,2,no\n", name="t.txt"))
+
+    with pytest.raises(TableError, match="line 1: the decision is missing"):
+        load_table(write_table("mid,3,\nold,4,\n"), like=training)
+
+
+def test_trailing_separator_on_a_test_set_matches_the_training_set(write_table):
+    training = load_table(write_table("old,1,yes\nnew,2,no\n", name="t.txt"))
+
+    test = load_table(write_table("mid,3,yes,\nold,4,no,\n"), like=training)
+
+    assert test.cases == (("mid", "3"), ("old", "4"))
+    assert test.decisions == ("yes", "no")
+
+
+def test_crlf_line_endings_leave_no_carriage_return_in_values(write_table):
+    path = write_table("a,b,class\r\nold,yes,up\r\nnew,no,down\r\n")
+
+    table = load_table(path, ReadOptions(header=True))
+
+    assert table.decision == "class"
+    assert table.cases == (("old", "yes"), ("new", "no"))
+    assert table.decisions == ("up", "down")
+
+
+def test_trailing_blank_lines_are_skipped(write_table):
+    path = write_table("old yes up\nnew no down\n\n\n  \n\t\n")
+
+    assert load_table(path).decisions == ("up", "down")
+
+
+def test_single_class_table_loads(write_table):
+    path = write_table("old,yes,up\nnew,no,up\n")
+
+    assert load_table(path).classes == ("up",)
+
+
+def test_question_mark_after_a_comma_and_spaces_is_missing(write_table):
+    path = write_table("39, State-gov, ?, <=50K\n50, ?, Husband, >50K\n")
+
+    table = load_table(path)
+
+    assert table.cases == (("39", "State-gov", None), ("50", None, "Husband"))
+    assert table.decisions == ("<=50K", ">50K")
+
+
+@pytest.mark.parametrize("labels", [("0", "1"), ("1.0", "2.0")])
+def test_numeric_class_labels_stay_text(write_table, labels):
+    path = write_table(f"old,{labels[0]}\nnew,{labels[1]}\nmid,{labels[0]}\n")
+
+    table = load_table(path)
+
+    assert table.classes == labels
+    assert table.decisions == (labels[0], labels[1], labels[0])

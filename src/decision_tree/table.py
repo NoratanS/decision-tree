@@ -545,7 +545,10 @@ def _read_rows(
         raise TableError(f"{name}: no cases found")
 
     candidates = _CANDIDATES if options.sep is None else (options.sep,)
-    sep, rows = _split_table(name, lines, candidates, min_columns, widths)
+    # Without a header, an empty last column may be a real attribute when the
+    # decision is elsewhere; with one, its empty name marks a trailing separator.
+    trailing = options.header or options.decision is None
+    sep, rows = _split_table(name, lines, candidates, min_columns, widths, trailing)
     numbers = [number for number, _ in lines]
     if options.header:
         names = rows.pop(0)
@@ -694,9 +697,11 @@ def _split_table(
     candidates: tuple[str | None, ...],
     min_columns: int,
     widths: tuple[int, ...] | None,
+    trailing: bool,
 ) -> tuple[str | None, list[list[str]]]:
     """The separator, and the rows split with it, that gives the most columns
-    on every line.
+    on every line; with `trailing`, a separator ending every line is dropped
+    (see `_split_all`).
 
     Candidates giving one of `widths` columns come first, if any does. `,` is
     left out if another candidate fits and every value it leaves holding a
@@ -708,7 +713,10 @@ def _split_table(
     errors: list[_LineError] = []
     for sep in candidates:
         try:
-            fitting[sep] = _split_all(lines, sep, min_columns)
+            rows = _split_all(lines, sep, min_columns)
+            if trailing and _ends_with_separator(lines, rows, sep, min_columns, widths):
+                rows = [row[:-1] for row in rows]
+            fitting[sep] = rows
         except _LineError as error:
             errors.append(error)
     if not fitting:
@@ -756,6 +764,7 @@ def _contains(value: str, sep: str | None) -> bool:
 def _split_all(
     lines: list[tuple[int, str]], sep: str | None, min_columns: int
 ) -> list[list[str]]:
+    """Every line split on `sep`, all with one column count."""
     rows: list[list[str]] = []
     for number, line in lines:
         try:
@@ -775,6 +784,26 @@ def _split_all(
             )
         rows.append(values)
     return rows
+
+
+def _ends_with_separator(
+    lines: list[tuple[int, str]],
+    rows: list[list[str]],
+    sep: str | None,
+    min_columns: int,
+    widths: tuple[int, ...] | None,
+) -> bool:
+    """Every line ends in `sep` and an unquoted empty cell (`1,2,yes,`), and
+    dropping that column leaves at least `min_columns`, one of `widths` if
+    given. A quoted `""` is a value, not a trailing separator."""
+    if sep is _WHITESPACE or len(rows[0]) - 1 < min_columns:
+        return False
+    if widths is not None and len(rows[0]) - 1 not in widths:
+        return False
+    return all(
+        row[-1] == "" and not line.rsplit(sep, 1)[-1].strip()
+        for (_, line), row in zip(lines, rows, strict=True)
+    )
 
 
 def _split(line: str, sep: str | None) -> list[str]:
