@@ -776,3 +776,156 @@ def test_uci_files_with_the_class_first_load_with_decision_a1(
     assert table.attributes[0] == "a2" and len(table.attributes) == attributes
     assert table.decision == "d"
     assert set(table.decisions) == classes
+
+
+def test_breast_w_without_its_case_id_loads_nine_attributes():
+    table = load_table(
+        UCI / "breast-cancer-wisconsin.data", ReadOptions(ignore=("a1",))
+    )
+
+    assert table.attributes == tuple(f"a{k}" for k in range(2, 11))
+    assert table.cases[0] == ("5", "1", "1", "1", "2", "1", "3", "1", "1")
+    assert table.decision == "d"
+
+
+def test_ignored_column_keeps_the_other_columns_positional_names(write_table):
+    path = write_table("1 old 3.5 up\n2 new 4.5 down\n")
+
+    table = load_table(path, ReadOptions(ignore=("a1",)))
+
+    assert table.attributes == ("a2", "a3")
+    assert table.cases == (("old", "3.5"), ("new", "4.5"))
+    assert table.kinds == ("discrete", "continuous")
+
+
+def test_test_set_like_the_training_set_drops_the_same_columns(write_table):
+    options = ReadOptions(ignore=("a1",))
+    training = load_table(write_table("1 old up\n2 new down\n", name="t.txt"), options)
+
+    test = load_table(write_table("7 mid up\n"), options, like=training)
+
+    assert test.attributes == ("a2",)
+    assert test.cases == (("mid",),)
+    assert test.decisions == ("up",)
+
+
+@pytest.mark.parametrize(
+    ("text", "decisions"),
+    [("e 7 z\n", ("e",)), ("7 z\n", None)],
+    ids=["n columns", "n-1 columns"],
+)
+def test_cases_like_the_training_set_drop_the_same_columns(
+    write_table, text, decisions
+):
+    options = ReadOptions(decision="a1", ignore=("a2",))
+    training = load_table(write_table("p 1 x\ne 2 y\n", name="t.txt"), options)
+
+    cases = load_cases(write_table(text), options, like=training)
+
+    assert training.attributes == ("a3",)
+    assert cases.cases == (("z",),)
+    assert cases.decisions == decisions
+
+
+@pytest.mark.parametrize(
+    ("text", "decisions"),
+    [("id,y,sex\n3,no,f\n", ("no",)), ("id,sex\n3,f\n", None)],
+    ids=["n columns", "n-1 columns"],
+)
+def test_header_cases_like_the_training_set_drop_the_same_columns(
+    write_table, text, decisions
+):
+    options = ReadOptions(header=True, decision="y", ignore=("id",))
+    training = load_table(write_table("id,y,sex\n1,yes,m\n", name="t.txt"), options)
+
+    cases = load_cases(write_table(text), options, like=training)
+
+    assert training.attributes == ("sex",)
+    assert cases.cases == (("f",),)
+    assert cases.decisions == decisions
+
+
+def test_test_set_column_count_counts_the_ignored_columns(write_table):
+    options = ReadOptions(ignore=("a1",))
+    training = load_table(write_table("1 old up\n", name="t.txt"), options)
+
+    with pytest.raises(TableError, match="has 2 columns, expected 3 "):
+        load_table(write_table("old up\n"), options, like=training)
+
+
+@pytest.mark.parametrize(
+    ("text", "options", "names"),
+    [
+        ("1 x up\n", ReadOptions(ignore=("id",)), "a1, a2, a3"),
+        ("id,y\n1,up\n", ReadOptions(header=True, ignore=("a1",)), "id, y"),
+    ],
+)
+def test_unknown_ignored_column_is_a_one_line_error_listing_the_columns(
+    write_table, text, options, names
+):
+    with pytest.raises(TableError) as error:
+        load_table(write_table(text), options)
+
+    message = str(error.value)
+    assert f"unknown column {options.ignore[0]!r} to ignore (columns: {names})" in (
+        message
+    )
+    assert "\n" not in message
+
+
+@pytest.mark.parametrize(
+    ("options", "name"),
+    [
+        (ReadOptions(ignore=("a3",)), "a3"),
+        (ReadOptions(decision="a1", ignore=("a1",)), "a1"),
+    ],
+    ids=["last column", "picked decision"],
+)
+def test_ignoring_the_decision_is_an_error(write_table, options, name):
+    with pytest.raises(TableError, match=f"'{name}' is the Decision Attribute"):
+        load_table(write_table("1 x up\n"), options)
+
+
+@pytest.mark.parametrize("override", ["discrete", "continuous"])
+def test_forcing_an_ignored_column_is_an_error(write_table, override):
+    with pytest.raises(
+        TableError, match=f"'a1' is ignored and cannot be forced {override}"
+    ):
+        load_table(
+            write_table("1 x up\n"), ReadOptions(ignore=("a1",)), **{override: ["a1"]}
+        )
+
+
+def test_ignoring_every_attribute_is_an_error(write_table):
+    with pytest.raises(TableError, match="leaves no attributes"):
+        load_table(write_table("1 x up\n"), ReadOptions(ignore=("a1", "a2")))
+
+
+@pytest.mark.parametrize("load", [load_table, load_cases])
+def test_header_test_set_with_the_ignored_column_last_is_not_its_decision(
+    write_table, load
+):
+    options = ReadOptions(header=True, ignore=("id",))
+    training = load_table(write_table("sex,id,y\nm,1,yes\n", name="t.txt"), options)
+
+    test = load(write_table("sex,y,id\nf,no,3\n"), options, like=training)
+
+    assert test.cases == (("f",),)
+    assert test.decisions == ("no",)
+
+
+def test_ignoring_the_decision_of_a_test_set_names_the_file(write_table):
+    options = ReadOptions(ignore=("a1",))
+    training = load_table(write_table("1 old up\n", name="t.txt"), options)
+    path = write_table("7 mid up\n")
+
+    with pytest.raises(TableError, match=r"table\.txt: 'a3' is the Decision"):
+        load_table(path, ReadOptions(ignore=("a3",)), like=training)
+
+
+def test_test_set_column_count_error_says_the_ignored_columns_stay(write_table):
+    options = ReadOptions(ignore=("a1",))
+    training = load_table(write_table("1 old up\n", name="t.txt"), options)
+
+    with pytest.raises(TableError, match=r"expected 3 \(with the ignored a1\) like"):
+        load_table(write_table("old up\n"), options, like=training)

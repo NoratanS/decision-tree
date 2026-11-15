@@ -86,6 +86,11 @@ class ReadOptions:
     A cell equal to one of the `missing` markers (after trimming) is a Missing
     Value, stored as None; `""` stands for the empty cell. Quoting does not
     change this: `"?"` is missing too.
+
+    `ignore` names columns left out of the table, like `decision` names one:
+    header names, or `aK` without a header. The other columns keep their
+    names, so without a header they keep their positions (`a2 … an` when `a1`
+    is ignored).
     """
 
     sep: str | None = None
@@ -93,6 +98,7 @@ class ReadOptions:
     encoding: str = "utf-8"
     missing: tuple[str, ...] = MISSING_MARKERS
     decision: str | None = None
+    ignore: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.sep is not None and len(self.sep) != 1:
@@ -128,7 +134,7 @@ def load_table(
     """Read a Decision Table as `options` say. A missing decision is an error.
 
     Attribute types are inferred (ADR 0001); `discrete` and `continuous` name
-    columns whose type is forced instead.
+    columns whose type is forced instead, never columns `options` ignore.
 
     With `like` (e.g. the Training Set, when reading a Test Set) the file must
     have that table's column count and takes its attribute types, so `discrete`
@@ -142,6 +148,10 @@ def load_table(
             "discrete and continuous cannot be forced on a table read like "
             "another: it takes that table's types"
         )
+    for kind, columns in (("discrete", discrete), ("continuous", continuous)):
+        for column in columns:
+            if column in options.ignore:
+                raise TableError(f"{column!r} is ignored and cannot be forced {kind}")
     schema = _Inferred(discrete, continuous) if like is None else _Like(like)
     loaded = _load(path, options, schema=schema, decision="required")
     assert loaded.decisions is not None  # the decision is required
@@ -209,13 +219,14 @@ def _load(
     """Read a file, check it against `schema`, split its cases and decisions,
     and check that continuous columns hold numbers."""
     parsed = _read_rows(path, options, min_columns=2 if decision == "required" else 1)
+    parsed = schema.without_ignored(parsed, options, decision)
     names, width, index = schema.columns(parsed, decision, options.decision)
     if index is not None:
         parsed = _decision_last(parsed, index)
     markers = frozenset(options.missing)
     decisions = _decisions(parsed, markers) if index is not None else None
     cases = _cases(parsed.rows, width, markers)
-    decision_names = () if index is None else (names[-1], _names(parsed)[index])
+    decision_names = () if index is None else (names[-1], parsed.names[index])
     kinds = schema.kinds(names, cases, decision_names)
     _check_continuous(parsed.name, names, kinds, parsed.numbers, cases)
     return _Loaded(names, kinds, cases, decisions)
@@ -227,6 +238,14 @@ class _Inferred:
 
     discrete: tuple[str, ...]
     continuous: tuple[str, ...]
+
+    def without_ignored(
+        self, parsed: _Rows, options: ReadOptions, decision: _Decision
+    ) -> _Rows:
+        """`parsed` without the columns `options` ignore; the file has the
+        decision column, which cannot be one of them."""
+        index = _decision_index(parsed, options.decision)
+        return _without_ignored(parsed, options.ignore, parsed.names[index])
 
     def columns(
         self, parsed: _Rows, decision: _Decision, decision_name: str | None
@@ -260,6 +279,50 @@ class _Like:
 
     table: DecisionTable
 
+    def without_ignored(
+        self, parsed: _Rows, options: ReadOptions, decision: _Decision
+    ) -> _Rows:
+        """`parsed` without the columns `options` ignore, after checking the
+        file has the Training Set's column count before they are dropped.
+
+        The file keeps the ignored columns. Without a header, a file without
+        the decision column names its columns like the Training Set's file
+        does, so `aK` is the same column in both; a file that dropped an
+        ignored column but kept its decision cannot be told from one with the
+        ignored column and no decision, and is read as the latter.
+        """
+        width = len(self.table.attributes) + len(set(options.ignore))
+        found = len(parsed.rows[0])
+        if decision == "required":
+            allowed, expected = (width + 1,), f"{width + 1}"
+        else:
+            allowed = (width, width + 1)
+            expected = f"{width} (without a decision) or {width + 1}"
+        if found not in allowed:
+            kept = f" (with the ignored {', '.join(options.ignore)})"
+            raise TableError(
+                f"{parsed.name} has {found} columns, expected {expected}"
+                f"{kept if options.ignore else ''} like the Training Set"
+            )
+        if found == width + 1:
+            return _without_ignored(
+                parsed, options.ignore, self._decision(parsed, options)
+            )
+        if not parsed.header:
+            names = [f"a{k}" for k in range(1, width + 2)]
+            names.remove(options.decision if options.decision in names else names[-1])
+            parsed = replace(parsed, names=names)
+        return _without_ignored(parsed, options.ignore, None)
+
+    def _decision(self, parsed: _Rows, options: ReadOptions) -> str | None:
+        """The name of `parsed`'s decision column, before any is ignored: with
+        a header the Training Set's decision name (None if no column has it,
+        so the name check reports the file), else `options.decision`'s column
+        or the last one."""
+        if parsed.header:
+            return self.table.decision if self.table.decision in parsed.names else None
+        return parsed.names[_decision_index(parsed, options.decision)]
+
     def columns(
         self, parsed: _Rows, decision: _Decision, decision_name: str | None
     ) -> tuple[tuple[str, ...], int, int | None]:
@@ -274,29 +337,19 @@ class _Like:
         like = self.table
         width = len(like.attributes)
         found = len(parsed.rows[0])
-        if decision == "required":
-            allowed, expected = (width + 1,), f"{width + 1}"
-        else:
-            allowed = (width, width + 1)
-            expected = f"{width} (without a decision) or {width + 1}"
-        if found not in allowed:
-            raise TableError(
-                f"{parsed.name} has {found} columns, expected {expected} "
-                "like the Training Set"
-            )
         like_names = (*like.attributes, like.decision)
         if found == width:
             index = None
-        elif parsed.header_names is not None and decision_name is not None:
-            index = _header_decision_index(parsed.header_names, like)
+        elif parsed.header and decision_name is not None:
+            index = _header_decision_index(parsed.names, like)
         else:
             index = _decision_index(parsed, decision_name)
-        if parsed.header_names is not None:
+        if parsed.header:
             in_file_order = list(like.attributes)
             if index is not None:
                 in_file_order.insert(index, like.decision)
             for column, (name, wanted) in enumerate(
-                zip(parsed.header_names, in_file_order, strict=True), start=1
+                zip(parsed.names, in_file_order, strict=True), start=1
             ):
                 if name != wanted:
                     raise TableError(
@@ -305,7 +358,7 @@ class _Like:
                     )
         if index is None:  # Cases without a decision column
             return like.attributes, width, index
-        if parsed.header_names is None and decision == "optional":
+        if not parsed.header and decision == "optional":
             return like_names, width, index
         return _file_names(parsed, index), width, index
 
@@ -318,18 +371,43 @@ class _Like:
         return self.table.kinds
 
 
-def _names(parsed: _Rows) -> list[str]:
-    """The file's column names: the header's, or `a1 … an` without one."""
-    if parsed.header_names is not None:
-        return list(parsed.header_names)
-    return [f"a{k}" for k in range(1, len(parsed.rows[0]) + 1)]
+def _without_ignored(
+    parsed: _Rows, ignore: Sequence[str], decision_name: str | None
+) -> _Rows:
+    """`parsed` without the columns named in `ignore`; the others keep their
+    names. An unknown name, or the decision column's (`decision_name`, None if
+    the file has none), is an error, as is leaving no Conditional Attribute."""
+    if not ignore:
+        return parsed
+    for column in ignore:
+        if column == decision_name:
+            raise TableError(
+                f"{parsed.name}: {column!r} is the Decision Attribute "
+                "and cannot be ignored"
+            )
+        if column not in parsed.names:
+            raise TableError(
+                f"{parsed.name}: unknown column {column!r} to ignore "
+                f"(columns: {', '.join(parsed.names)})"
+            )
+    keep = [i for i, name in enumerate(parsed.names) if name not in ignore]
+    attributes_left = len(keep) - (decision_name is not None)
+    if attributes_left == 0:
+        raise TableError(
+            f"{parsed.name}: ignoring {', '.join(ignore)} leaves no attributes"
+        )
+    return replace(
+        parsed,
+        names=[parsed.names[i] for i in keep],
+        rows=[[row[i] for i in keep] for row in parsed.rows],
+    )
 
 
 def _file_names(parsed: _Rows, index: int) -> tuple[str, ...]:
     """Column names with the decision's (at `index`) last: the header's, or
     without a header `aK` for column K and `d` for the decision."""
-    names = _names(parsed)
-    if parsed.header_names is None:
+    names = list(parsed.names)
+    if not parsed.header:
         names[index] = "d"
     return (*names[:index], *names[index + 1 :], names[index])
 
@@ -356,7 +434,7 @@ def _decision_index(parsed: _Rows, name: str | None) -> int:
     width = len(parsed.rows[0])
     if name is None:
         return width - 1
-    names = _names(parsed)
+    names = parsed.names
     if name not in names:
         raise TableError(
             f"{parsed.name}: unknown decision column {name!r} "
@@ -381,8 +459,10 @@ class _Rows:
     """The file name, for error messages."""
     numbers: list[int]
     """Line number of each row."""
-    header_names: list[str] | None
-    """Column names from the header line, or None without `header`."""
+    header: bool
+    """Whether the names come from the file's header line."""
+    names: list[str]
+    """Column names: the header's, or `a1 … an` without one."""
     rows: list[list[str]]
 
 
@@ -426,11 +506,12 @@ def _read_rows(
     candidates = _CANDIDATES if options.sep is None else (options.sep,)
     rows = _split_table(name, lines, candidates, min_columns)
     numbers = [number for number, _ in lines]
-    header_names = None
     if options.header:
-        header_names = rows.pop(0)
-        _check_header(name, numbers.pop(0), header_names)
-    return _Rows(name, numbers, header_names, rows)
+        names = rows.pop(0)
+        _check_header(name, numbers.pop(0), names)
+    else:
+        names = [f"a{k}" for k in range(1, len(rows[0]) + 1)]
+    return _Rows(name, numbers, options.header, names, rows)
 
 
 def _decisions(parsed: _Rows, markers: frozenset[str]) -> tuple[str, ...]:

@@ -1,7 +1,9 @@
 from pathlib import Path
 
-from decision_tree.stats import table_stats
-from decision_tree.table import load_table
+import pytest
+
+from decision_tree.stats import likely_identifiers, table_stats
+from decision_tree.table import ReadOptions, load_table
 
 DATA = Path(__file__).parent.parent / "data"
 
@@ -59,3 +61,74 @@ def test_missing_values_are_counted_per_attribute_and_not_as_values(write_table)
 
     assert [a.missing for a in stats.attributes] == [2, 2]
     assert [dict(a.counts) for a in stats.attributes] == [{"old": 1}, {"yes": 1}]
+
+
+UCI = Path(__file__).parent.parent.parent / "benchmarks" / "data" / "raw"
+
+
+def test_breast_w_case_id_looks_like_an_identifier():
+    table = load_table(UCI / "breast-cancer-wisconsin.data")
+
+    found = likely_identifiers(table_stats(table))
+
+    assert [(a.name, a.distinct, a.known) for a in found] == [("a1", 645, 699)]
+
+
+def test_glass_case_id_looks_like_an_identifier():
+    table = load_table(UCI / "glass.data")
+
+    assert [a.name for a in likely_identifiers(table_stats(table))] == ["a1"]
+
+
+def test_adult_fnlwgt_does_not_look_like_an_identifier():
+    table = load_table(UCI / "adult.data")
+
+    assert likely_identifiers(table_stats(table)) == ()
+
+
+@pytest.mark.parametrize(
+    ("name", "options"),
+    [
+        ("stock_market.txt", ReadOptions()),
+        ("test_table.txt", ReadOptions()),
+        ("golf.txt", ReadOptions(header=True)),
+    ],
+)
+def test_course_tables_and_golf_have_no_identifiers(name, options):
+    assert likely_identifiers(table_stats(load_table(DATA / name, options))) == ()
+
+
+def unique_column(values, decision="x"):
+    return "".join(f"{value} {decision}\n" for value in values)
+
+
+@pytest.mark.parametrize(
+    ("values", "found"),
+    [
+        ([f"id{k}" for k in range(20)], True),  # discrete, 20 of 20
+        ([f"id{k}" for k in range(19)], False),  # fewer than 20 known
+        ([*(f"id{k}" for k in range(18)), "id0", "id1"], True),  # 18 of 20 = 90%
+        ([*(f"id{k}" for k in range(17)), "id0", "id1", "id2"], False),  # 85%
+        ([*(f"id{k}" for k in range(20)), *["?"] * 5], True),  # missing not counted
+    ],
+)
+def test_identifier_needs_20_known_values_and_90_percent_distinct(
+    write_table, values, found
+):
+    table = load_table(write_table(unique_column(values)))
+
+    assert bool(likely_identifiers(table_stats(table))) is found
+
+
+def test_integers_forced_continuous_can_be_an_identifier(write_table):
+    path = write_table(unique_column(range(20)))
+
+    table = load_table(path, continuous=["a1"])
+
+    assert [a.name for a in likely_identifiers(table_stats(table))] == ["a1"]
+
+
+def test_unique_fractional_values_are_not_an_identifier(write_table):
+    path = write_table(unique_column(f"{k}.5" for k in range(20)))
+
+    assert likely_identifiers(table_stats(load_table(path))) == ()

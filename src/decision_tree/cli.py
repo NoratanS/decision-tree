@@ -34,7 +34,7 @@ from decision_tree.render import (
     render_blocks_plain,
     stats_blocks,
 )
-from decision_tree.stats import table_stats
+from decision_tree.stats import TableStats, likely_identifiers, table_stats
 from decision_tree.table import (
     MISSING_MARKERS,
     DecisionTable,
@@ -77,6 +77,15 @@ DecisionOption = Annotated[
         "--decision",
         help="Column of the decision: a header name, or aK for column K. "
         "Default: the last column.",
+        rich_help_panel=_LOADING,
+    ),
+]
+IgnoreOption = Annotated[
+    str,
+    typer.Option(
+        "--ignore",
+        help="Comma-separated columns to leave out, e.g. a case ID: header names, "
+        "or aK for column K.",
         rich_help_panel=_LOADING,
     ),
 ]
@@ -171,6 +180,7 @@ def train(
     sep: Sep = None,
     encoding: Encoding = "utf-8",
     decision: DecisionOption = None,
+    ignore: IgnoreOption = "",
     discrete: Discrete = "",
     continuous: Continuous = "",
     missing: Missing = _DEFAULT_MISSING,
@@ -214,8 +224,8 @@ def train(
     out = Console()
     source: TestSource = None
     with _table_errors():
-        options = _read_options(header, sep, encoding, missing, decision)
-        training = _load_training(file, options, discrete, continuous)
+        options = _read_options(header, sep, encoding, missing, decision, ignore)
+        training, _ = _load_training(file, options, discrete, continuous)
         if test is not None:
             source = FileSource(test, load_table(test, options, like=training))
     try:
@@ -253,6 +263,7 @@ def classify(
     sep: Sep = None,
     encoding: Encoding = "utf-8",
     decision: DecisionOption = None,
+    ignore: IgnoreOption = "",
     discrete: Discrete = "",
     continuous: Continuous = "",
     missing: Missing = _DEFAULT_MISSING,
@@ -263,8 +274,8 @@ def classify(
     """Build an unpruned tree from TRAIN and classify each case of CASES."""
     out = Console()
     with _table_errors():
-        options = _read_options(header, sep, encoding, missing, decision)
-        training = _load_training(train_file, options, discrete, continuous)
+        options = _read_options(header, sep, encoding, missing, decision, ignore)
+        training, _ = _load_training(train_file, options, discrete, continuous)
         to_classify = load_cases(cases, options, like=training)
     tree = build_tree(
         training, _build_options(criterion, quinlan_gain_filter, min_cases)
@@ -282,6 +293,7 @@ def stats(
     sep: Sep = None,
     encoding: Encoding = "utf-8",
     decision: DecisionOption = None,
+    ignore: IgnoreOption = "",
     discrete: Discrete = "",
     continuous: Continuous = "",
     missing: Missing = _DEFAULT_MISSING,
@@ -289,9 +301,9 @@ def stats(
     """Show each attribute's type, value counts and missing values."""
     out = Console()
     with _table_errors():
-        options = _read_options(header, sep, encoding, missing, decision)
-        table = _load_training(file, options, discrete, continuous)
-    _print(out, stats_blocks(table_stats(table)), plain=plain, spaced=False)
+        options = _read_options(header, sep, encoding, missing, decision, ignore)
+        _, statistics = _load_training(file, options, discrete, continuous)
+    _print(out, stats_blocks(statistics), plain=plain, spaced=False)
 
 
 def _build_options(
@@ -306,7 +318,12 @@ def _build_options(
 
 
 def _read_options(
-    header: bool, sep: str | None, encoding: str, missing: str, decision: str | None
+    header: bool,
+    sep: str | None,
+    encoding: str,
+    missing: str,
+    decision: str | None,
+    ignore: str,
 ) -> ReadOptions:
     return ReadOptions(
         sep=sep,
@@ -314,19 +331,30 @@ def _read_options(
         encoding=encoding,
         missing=parse_markers(missing),
         decision=decision,
+        ignore=parse_columns(ignore),
     )
 
 
 def _load_training(
     file: str, options: ReadOptions, discrete: str, continuous: str
-) -> DecisionTable:
-    """Load FILE with the --discrete / --continuous overrides."""
-    return load_table(
+) -> tuple[DecisionTable, TableStats]:
+    """Load FILE with the --discrete / --continuous overrides, with its
+    statistics, and warn on stderr about each attribute that looks like an
+    identifier."""
+    table = load_table(
         file,
         options,
         discrete=parse_columns(discrete),
         continuous=parse_columns(continuous),
     )
+    stats = table_stats(table)
+    for attribute in likely_identifiers(stats):
+        _warn(
+            f"{attribute.name} has {attribute.distinct} distinct values in "
+            f"{attribute.known} cases; it looks like an identifier "
+            f"(use --ignore {attribute.name})"
+        )
+    return table, stats
 
 
 @contextmanager
@@ -406,6 +434,12 @@ def _rich_row(row: TreeRow) -> str:
         decision, counts = escape(row.leaf.decision), escape(row.leaf.counts)
         parts.append(f"[bold green]{decision}[/] [dim]{counts}[/]")
     return " → ".join(parts)
+
+
+def _warn(message: str) -> None:
+    Console(stderr=True).print(
+        f"[bold yellow]warning:[/] {escape(message)}", highlight=False, soft_wrap=True
+    )
 
 
 def _fail(message: str) -> NoReturn:

@@ -4,6 +4,7 @@ import pytest
 from rich.console import Console
 from typer.testing import CliRunner
 
+from decision_tree import cli
 from decision_tree.cli import app, print_rich
 from decision_tree.render import Cell, Column, TableBlock
 
@@ -600,3 +601,94 @@ def test_header_decision_in_the_middle_is_picked_by_name(write_table):
     assert classified.exit_code == 0, classified.output
     predicted = [line.split()[1] for line in classified.stdout.splitlines()[1:]]
     assert predicted == ["no", "yes"]
+
+
+UCI = Path(__file__).parent.parent.parent / "benchmarks" / "data" / "raw"
+BREAST_W = str(UCI / "breast-cancer-wisconsin.data")
+BREAST_W_WARNING = (
+    "warning: a1 has 645 distinct values in 699 cases; it looks like an "
+    "identifier (use --ignore a1)\n"
+)
+
+
+@pytest.mark.parametrize(
+    "args",
+    [["stats", BREAST_W], ["train", BREAST_W], ["classify", BREAST_W, BREAST_W]],
+    ids=["stats", "train", "classify"],
+)
+def test_identifier_column_warning_goes_to_stderr(args):
+    result = runner.invoke(app, args)
+
+    assert result.exit_code == 0, result.output
+    assert result.stderr == BREAST_W_WARNING
+    assert "warning" not in result.stdout
+
+
+def test_ignored_identifier_column_is_not_loaded_and_not_warned_about():
+    result = runner.invoke(app, ["stats", BREAST_W, "--ignore", "a1"])
+
+    assert result.exit_code == 0, result.output
+    assert result.stderr == ""
+    assert result.stdout.startswith("a2 (discrete)")
+    assert "\na1 " not in result.stdout
+
+
+def test_train_tests_a_test_set_without_the_ignored_columns(write_table):
+    training = str(write_table("1,x,p\n2,y,e\n", name="training.txt"))
+    test = str(write_table("3,x,p\n4,x,e\n", name="test.txt"))
+
+    result = runner.invoke(
+        app, ["train", training, "--ignore", "a1", "-m", "1", "--test", test]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert unpruned_tree(result.stdout).startswith("a2 = x: p (1.0)")
+    assert "2 cases, 1 error (50.0%)" in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("options", "message"),
+    [
+        (["--ignore", "id"], "unknown column 'id' to ignore (columns: a1, a2, a3)"),
+        (["--ignore", "a3"], "'a3' is the Decision Attribute and cannot be ignored"),
+        (
+            ["--ignore", "a1", "--discrete", "a1"],
+            "'a1' is ignored and cannot be forced discrete",
+        ),
+    ],
+    ids=["unknown", "decision", "forced"],
+)
+def test_bad_ignore_gives_one_line_error(write_table, options, message):
+    result = runner.invoke(app, ["stats", str(write_table("1,x,p\n")), *options])
+
+    assert result.exit_code == 1
+    assert result.stderr.strip().count("\n") == 0
+    assert message in result.stderr
+
+
+@pytest.mark.parametrize(
+    "args",
+    [[STOCK_MARKET], [str(DATA / "test_table.txt")], GOLF_ARGS],
+    ids=["stock_market", "test_table", "golf"],
+)
+def test_course_tables_and_golf_print_no_warning(args):
+    result = runner.invoke(app, ["stats", *args])
+
+    assert result.exit_code == 0, result.output
+    assert result.stderr == ""
+
+
+def test_stats_computes_the_statistics_once(monkeypatch):
+    calls = []
+    real = cli.table_stats
+
+    def counting(table):
+        calls.append(table)
+        return real(table)
+
+    monkeypatch.setattr(cli, "table_stats", counting)
+
+    result = runner.invoke(app, ["stats", STOCK_MARKET])
+
+    assert result.exit_code == 0, result.output
+    assert len(calls) == 1
