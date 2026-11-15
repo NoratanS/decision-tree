@@ -279,9 +279,8 @@ def experiment_blocks(result: ExperimentResult) -> list[Block]:
     tree's if any."""
     blocks: list[Block] = [_tree_block(tree_heading(result.unpruned), result.unpruned)]
     if result.pruned is not None:
-        assert result.confidence is not None, "a pruned tree has a Confidence Level"
-        heading = tree_heading(result.pruned, pruned_at=result.confidence)
-        blocks.append(_tree_block(heading, result.pruned))
+        tree, confidence = result.pruned.tree, result.pruned.confidence
+        blocks.append(_tree_block(tree_heading(tree, pruned_at=confidence), tree))
     for on_set in result.evaluations:
         name = set_name(on_set.evaluated_set)
         for pruned, evaluation in ((False, on_set.unpruned), (True, on_set.pruned)):

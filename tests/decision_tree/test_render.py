@@ -5,6 +5,7 @@ from decision_tree.experiment import (
     ExperimentResult,
     FileTestSet,
     HoldOutTestSet,
+    PrunedTree,
     SetEvaluation,
     TrainingSet,
 )
@@ -264,8 +265,6 @@ def test_experiment_without_pruning_shows_one_tree_and_its_evaluation():
     result = ExperimentResult(
         SPLIT_TREE,
         None,
-        None,
-        None,
         (SetEvaluation(TrainingSet(), evaluation((3, 0), (1, 2)), None),),
     )
 
@@ -285,8 +284,6 @@ def test_confusion_matrix_cells_are_correct_wrong_or_empty():
     result = ExperimentResult(
         SPLIT_TREE,
         None,
-        None,
-        None,
         (SetEvaluation(TrainingSet(), evaluation((3, 0), (1, 2)), None),),
     )
 
@@ -301,7 +298,7 @@ def test_confusion_matrix_cells_are_correct_wrong_or_empty():
 
 
 def pruned_result(*evaluations: SetEvaluation, confidence=0.25) -> ExperimentResult:
-    return ExperimentResult(SPLIT_TREE, ONE_LEAF, confidence, None, evaluations)
+    return ExperimentResult(SPLIT_TREE, PrunedTree(ONE_LEAF, confidence), evaluations)
 
 
 ON_TRAINING = SetEvaluation(
@@ -363,8 +360,6 @@ def test_experiment_with_a_hold_out_names_the_seed_of_the_split():
     result = ExperimentResult(
         SPLIT_TREE,
         None,
-        None,
-        42,
         (SetEvaluation(TrainingSet(), evaluation((3, 0), (1, 2)), None), on_test),
     )
 

@@ -73,8 +73,7 @@ def test_without_a_test_set_evaluates_both_trees_on_the_training_set():
     result = run_experiment(stock_market())
 
     assert result.pruned is not None
-    assert result.confidence == 0.25
-    assert result.seed is None
+    assert result.pruned.confidence == 0.25
     [training] = result.evaluations
     assert training.evaluated_set == TrainingSet()
     assert (training.unpruned.cases, training.unpruned.errors) == (10, 0)
@@ -86,7 +85,6 @@ def test_no_confidence_level_means_no_pruned_tree():
     result = run_experiment(stock_market(), confidence=None)
 
     assert result.pruned is None
-    assert result.confidence is None
     assert render_plain(result.unpruned).startswith("a1 = old: down (3.0)")
     assert [e.pruned for e in result.evaluations] == [None]
 
@@ -97,12 +95,13 @@ def test_confidence_level_sets_how_much_is_pruned():
     at_25 = run_experiment(golf(), confidence=0.25)
 
     assert at_5.pruned is not None
-    assert render_plain(at_5.pruned) == "Play (14.0/5.0)"
+    assert at_5.pruned.confidence == 0.05
+    assert render_plain(at_5.pruned.tree) == "Play (14.0/5.0)"
     assert at_5.evaluations[0].pruned is not None
     assert at_5.evaluations[0].pruned.errors == 5
     assert at_25.pruned is not None
-    assert size(at_25.pruned) == size(at_25.unpruned) == 8
-    assert (at_5.confidence, at_25.confidence) == (0.05, 0.25)
+    assert at_25.pruned.confidence == 0.25
+    assert size(at_25.pruned.tree) == size(at_25.unpruned) == 8
 
 
 def test_build_options_reach_the_tree():
@@ -130,7 +129,6 @@ def test_test_file_is_evaluated_after_the_training_set(write_table):
     for evaluation in (on_test.unpruned, on_test.pruned):
         assert (evaluation.cases, evaluation.errors) == (2, 1)
         assert evaluation.confusion["up"] == {"down": 1, "up": 1}
-    assert result.seed is None
 
 
 def test_hold_out_with_a_seed_gives_the_same_experiment_every_run():
@@ -138,7 +136,6 @@ def test_hold_out_with_a_seed_gives_the_same_experiment_every_run():
     second = run_experiment(golf(), HoldOut(0.7, seed=42))
 
     assert first == second
-    assert first.seed == 42
     training, test = first.evaluations
     assert training.evaluated_set == TrainingSet()
     assert training.unpruned.cases == 10
@@ -149,9 +146,9 @@ def test_hold_out_with_a_seed_gives_the_same_experiment_every_run():
 def test_hold_out_without_a_seed_returns_the_seed_it_picked():
     result = run_experiment(golf(), HoldOut(0.7))
 
-    assert result.seed is not None
-    assert result.evaluations[1].evaluated_set == HoldOutTestSet(seed=result.seed)
-    assert run_experiment(golf(), HoldOut(0.7, seed=result.seed)) == result
+    picked = result.evaluations[1].evaluated_set
+    assert isinstance(picked, HoldOutTestSet)
+    assert run_experiment(golf(), HoldOut(0.7, seed=picked.seed)) == result
 
 
 def test_hold_out_that_leaves_a_part_empty_is_an_error():

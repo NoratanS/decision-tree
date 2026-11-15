@@ -75,15 +75,19 @@ class SetEvaluation:
 
 
 @dataclass(frozen=True)
+class PrunedTree:
+    """A pruned tree and the Confidence Level it was pruned at."""
+
+    tree: Tree
+    confidence: float
+    """The Confidence Level, a fraction in (0, 1]."""
+
+
+@dataclass(frozen=True)
 class ExperimentResult:
     unpruned: Tree
-    pruned: Tree | None
+    pruned: PrunedTree | None
     """None when the Experiment does not prune."""
-    confidence: float | None
-    """The Confidence Level `pruned` was pruned at, a fraction; None without
-    pruning."""
-    seed: int | None
-    """The seed of the hold-out split; None without a split."""
     evaluations: tuple[SetEvaluation, ...]
     """The Training Set first, then the Test Set if there is one."""
 
@@ -103,7 +107,6 @@ def run_experiment(
     evaluated on that part and the held-out one. Raises SplitError if the split
     would leave a part empty.
     """
-    seed: int | None = None
     tests: list[tuple[EvaluatedSet, DecisionTable]] = []
     match test:
         case FileSource(file, table):
@@ -115,16 +118,20 @@ def run_experiment(
     sets = [(TrainingSet(), training), *tests]
 
     unpruned = build_tree(training, options)
-    pruned = None if confidence is None else prune(unpruned, confidence)
+    pruned = (
+        None
+        if confidence is None
+        else PrunedTree(prune(unpruned, confidence), confidence)
+    )
     evaluations = tuple(
         SetEvaluation(
             evaluated_set,
             evaluate(unpruned, table),
-            None if pruned is None else evaluate(pruned, table),
+            None if pruned is None else evaluate(pruned.tree, table),
         )
         for evaluated_set, table in sets
     )
-    return ExperimentResult(unpruned, pruned, confidence, seed, evaluations)
+    return ExperimentResult(unpruned, pruned, evaluations)
 
 
 def hold_out(
