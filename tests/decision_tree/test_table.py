@@ -212,6 +212,40 @@ def test_unknown_encoding_is_a_table_error(write_table):
         load_table(path, ReadOptions(encoding="klingon"))
 
 
+def test_utf8_bom_is_not_part_of_the_first_column_name(write_table):
+    path = write_table("wiek,płeć,decyzja\n20,K,tak\n30,M,nie\n", encoding="utf-8-sig")
+
+    table = load_table(path, ReadOptions(header=True), continuous=("wiek",))
+
+    assert table.attributes == ("wiek", "płeć")
+    assert table.kinds == ("continuous", "discrete")
+
+
+def test_utf8_bom_is_not_part_of_the_first_value_without_a_header(write_table):
+    path = write_table("stary;tak;spadek\nnowy;nie;wzrost\n", encoding="utf-8-sig")
+
+    table = load_table(path)
+
+    assert table.cases[0] == ("stary", "tak")
+
+
+@pytest.mark.parametrize("encoding", ["UTF8", "utf_8", "U8"])
+def test_utf8_bom_is_stripped_for_any_spelling_of_utf8(write_table, encoding):
+    path = write_table("wiek;decyzja\n20;tak\n", encoding="utf-8-sig")
+
+    table = load_table(path, ReadOptions(header=True, encoding=encoding))
+
+    assert table.attributes == ("wiek",)
+
+
+def test_decode_error_in_a_utf8_bom_file_gives_the_file_byte_offset(tmp_path):
+    path = tmp_path / "table.txt"
+    path.write_bytes(b"\xef\xbb\xbfab;c\n\xff;x\n")
+
+    with pytest.raises(TableError, match="at byte 8;"):
+        load_table(path)
+
+
 def test_text_and_whole_numbers_are_discrete_fractions_are_continuous(write_table):
     path = write_table(
         "old 0 3.7 -2 1 yes\nnew 2 4 +5 1e-2 no\nmid 1 -0.5 7 2.0 yes\n",
@@ -414,6 +448,19 @@ def test_cases_with_header_name_the_first_column_named_differently(write_table, 
 
     with pytest.raises(TableError, match="column 2 is named 'temp', expected 'temp"):
         load_cases(path, ReadOptions(header=True), like=golf_training())
+
+
+def test_bom_training_file_matches_a_test_set_header_without_a_bom(write_table):
+    training_text = "wiek;płeć;decyzja\n20;K;tak\n30;M;nie\n"
+    path = write_table(training_text, name="training.txt", encoding="utf-8-sig")
+    training = load_table(path, ReadOptions(header=True))
+    test_path = write_table("wiek;płeć;decyzja\n25;K;tak\n", name="test.txt")
+
+    table = load_table(test_path, ReadOptions(header=True), like=training)
+    cases = load_cases(test_path, ReadOptions(header=True), like=training)
+
+    assert table.cases == (("25", "K"),)
+    assert cases.cases == (("25", "K"),)
 
 
 def test_cases_without_a_decision_column_have_no_decisions(write_table):

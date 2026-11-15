@@ -4,6 +4,7 @@ One case per line, the Decision Attribute in the last column. The separator is
 detected from runs of whitespace, `,` `;` `|` `:` unless one is given.
 """
 
+import codecs
 import math
 import os
 import re
@@ -75,7 +76,8 @@ class ReadOptions:
 
     `sep` is any single character; `None` detects the separator. With `header`
     the first non-blank line names the columns, otherwise they are `a1 … an`
-    and `d`. The file is decoded with `encoding`.
+    and `d`. The file is decoded with `encoding`; under any spelling of UTF-8
+    one leading byte order mark is dropped.
 
     A cell equal to one of the `missing` markers (after trimming) is a Missing
     Value, stored as None; `""` stands for the empty cell. Quoting does not
@@ -303,13 +305,25 @@ class _Rows:
     rows: list[list[str]]
 
 
+def _drop_utf8_bom(text: str, encoding: str) -> str:
+    """`text` without one leading byte order mark if `encoding` is UTF-8.
+
+    Decoding with plain UTF-8 and dropping the mark afterwards, rather than
+    decoding with `utf-8-sig`, keeps decode error offsets counted from the
+    start of the file.
+    """
+    if codecs.lookup(encoding).name == "utf-8":
+        return text.removeprefix("\ufeff")
+    return text
+
+
 def _read_rows(
     path: str | os.PathLike[str], options: ReadOptions, *, min_columns: int
 ) -> _Rows:
     name = os.fspath(path)
     try:
         with open(path, encoding=options.encoding) as file:
-            text = file.read()
+            text = _drop_utf8_bom(file.read(), options.encoding)
     except LookupError:
         raise TableError(f"unknown encoding {options.encoding!r}") from None
     except UnicodeDecodeError as error:
