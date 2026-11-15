@@ -133,29 +133,15 @@ def load_table(
             "discrete and continuous cannot be forced on a table read like "
             "another: it takes that table's types"
         )
-    parsed = _read_rows(path, options, min_columns=2)
-    width = len(parsed.rows[0])
-    if like is not None:
-        _check_like(parsed, like, decision_optional=False)
-    names = parsed.header_names or [*(f"a{i}" for i in range(1, width)), "d"]
-    markers = frozenset(options.missing)
-    decisions = _decisions(parsed, markers)
-    cases = _cases(parsed.rows, width - 1, markers)
-    if like is None:
-        forced = _overrides(names, discrete, continuous)
-        columns = enumerate(zip(*cases, strict=True))
-        kinds = tuple(forced.get(i) or _infer_kind(column) for i, column in columns)
-    else:
-        kinds = like.kinds
-        forced = dict(enumerate(kinds))
-    _check_continuous(parsed.name, names, forced, parsed.numbers, cases)
-
+    schema = _Inferred(discrete, continuous) if like is None else _Like(like)
+    loaded = _load(path, options, schema=schema, decision="required")
+    assert loaded.decisions is not None  # the decision is required
     return DecisionTable(
-        attributes=tuple(names[:-1]),
-        decision=names[-1],
-        cases=cases,
-        decisions=decisions,
-        kinds=kinds,
+        attributes=loaded.names[:-1],
+        decision=loaded.names[-1],
+        cases=loaded.cases,
+        decisions=loaded.decisions,
+        kinds=loaded.kinds,
     )
 
 
@@ -182,17 +168,126 @@ def load_cases(
     followed by the decision. The attribute types are `like`'s. With `header`,
     the column names must be `like`'s, in the same order.
     """
-    parsed = _read_rows(path, options, min_columns=1)
-    _check_like(parsed, like, decision_optional=True)
-    width = len(like.attributes)
+    loaded = _load(path, options, schema=_Like(like), decision="optional")
+    return Cases(loaded.cases, loaded.decisions)
+
+
+type _Decision = Literal["required", "optional"]
+"""Whether a file must end with the decision column or may leave it out."""
+
+
+@dataclass(frozen=True)
+class _Loaded:
+    """A file read and checked, before it becomes a DecisionTable or Cases."""
+
+    names: tuple[str, ...]
+    """Column names, the decision's last if the file has that column."""
+    kinds: tuple[Kind, ...]
+    """Type of each Conditional Attribute."""
+    cases: tuple[tuple[Value, ...], ...]
+    decisions: tuple[str, ...] | None
+    """Decision Class of each Case; None if the file has no decision column."""
+
+
+def _load(
+    path: str | os.PathLike[str],
+    options: ReadOptions,
+    *,
+    schema: _Inferred | _Like,
+    decision: _Decision,
+) -> _Loaded:
+    """Read a file, check it against `schema`, split its cases and decisions,
+    and check that continuous columns hold numbers."""
+    parsed = _read_rows(path, options, min_columns=2 if decision == "required" else 1)
+    names, width = schema.columns(parsed, decision)
     markers = frozenset(options.missing)
     has_decisions = len(parsed.rows[0]) > width
     decisions = _decisions(parsed, markers) if has_decisions else None
     cases = _cases(parsed.rows, width, markers)
-    _check_continuous(
-        parsed.name, like.attributes, dict(enumerate(like.kinds)), parsed.numbers, cases
-    )
-    return Cases(cases, decisions)
+    kinds = schema.kinds(names, cases)
+    _check_continuous(parsed.name, names, kinds, parsed.numbers, cases)
+    return _Loaded(names, kinds, cases, decisions)
+
+
+@dataclass(frozen=True)
+class _Inferred:
+    """Columns named by the file; types inferred (ADR 0001) unless forced."""
+
+    discrete: tuple[str, ...]
+    continuous: tuple[str, ...]
+
+    def columns(
+        self, parsed: _Rows, decision: _Decision
+    ) -> tuple[tuple[str, ...], int]:
+        """Column names and the number of Conditional Attributes. The decision
+        is the last column, so `decision` must be required."""
+        if decision != "required":
+            raise ValueError("inferring a table's columns needs its decision column")
+        width = len(parsed.rows[0])
+        return _file_names(parsed, width), width - 1
+
+    def kinds(
+        self, names: tuple[str, ...], cases: tuple[tuple[Value, ...], ...]
+    ) -> tuple[Kind, ...]:
+        forced = _overrides(names, self.discrete, self.continuous)
+        columns = enumerate(zip(*cases, strict=True))
+        return tuple(forced.get(i) or _infer_kind(column) for i, column in columns)
+
+
+@dataclass(frozen=True)
+class _Like:
+    """Columns and types of another table, e.g. the Training Set."""
+
+    table: DecisionTable
+
+    def columns(
+        self, parsed: _Rows, decision: _Decision
+    ) -> tuple[tuple[str, ...], int]:
+        """Column names and the number of Conditional Attributes, after checking
+        the file has `table`'s column count and, with a header, its names in
+        the same order.
+
+        Without a header, a file that must have the decision is named like any
+        other (`a1 … an`, `d`); Cases keep `table`'s names.
+        """
+        like = self.table
+        width = len(like.attributes)
+        found = len(parsed.rows[0])
+        if decision == "required":
+            allowed, expected = (width + 1,), f"{width + 1}"
+        else:
+            allowed = (width, width + 1)
+            expected = f"{width} (without a decision) or {width + 1}"
+        if found not in allowed:
+            raise TableError(
+                f"{parsed.name} has {found} columns, expected {expected} "
+                "like the Training Set"
+            )
+        like_names = (*like.attributes, like.decision)
+        if parsed.header_names is not None:
+            for column, (name, wanted) in enumerate(
+                zip(parsed.header_names, like_names, strict=False), start=1
+            ):
+                if name != wanted:
+                    raise TableError(
+                        f"{parsed.name}: column {column} is named {name!r}, "
+                        f"expected {wanted!r} like the Training Set"
+                    )
+        if parsed.header_names is None and decision == "optional":
+            return like_names[:found], width
+        return _file_names(parsed, found), width
+
+    def kinds(
+        self, names: tuple[str, ...], cases: tuple[tuple[Value, ...], ...]
+    ) -> tuple[Kind, ...]:
+        return self.table.kinds
+
+
+def _file_names(parsed: _Rows, width: int) -> tuple[str, ...]:
+    """The header's column names, or `a1 … an` and `d` without a header."""
+    if parsed.header_names is not None:
+        return tuple(parsed.header_names)
+    return (*(f"a{i}" for i in range(1, width)), "d")
 
 
 @dataclass(frozen=True)
@@ -243,35 +338,6 @@ def _read_rows(
     return _Rows(name, numbers, header_names, rows)
 
 
-def _check_like(parsed: _Rows, like: DecisionTable, *, decision_optional: bool) -> None:
-    """The file has `like`'s columns: its column count and, with a header, its
-    names in the same order. With `decision_optional` the decision column may
-    be left out."""
-    width = len(like.attributes)
-    found = len(parsed.rows[0])
-    if found not in ((width, width + 1) if decision_optional else (width + 1,)):
-        expected = (
-            f"{width} (without a decision) or {width + 1}"
-            if decision_optional
-            else f"{width + 1}"
-        )
-        raise TableError(
-            f"{parsed.name} has {found} columns, expected {expected} "
-            "like the Training Set"
-        )
-    if parsed.header_names is None:
-        return
-    expected_names = (*like.attributes, like.decision)
-    for column, (name, wanted) in enumerate(
-        zip(parsed.header_names, expected_names, strict=False), start=1
-    ):
-        if name != wanted:
-            raise TableError(
-                f"{parsed.name}: column {column} is named {name!r}, expected "
-                f"{wanted!r} like the Training Set"
-            )
-
-
 def _decisions(parsed: _Rows, markers: frozenset[str]) -> tuple[str, ...]:
     """The last column; a Missing Value marker there is an error."""
     for number, row in zip(parsed.numbers, parsed.rows, strict=True):
@@ -294,7 +360,7 @@ def _cases(
 
 
 def _overrides(
-    names: list[str], discrete: Iterable[str], continuous: Iterable[str]
+    names: Sequence[str], discrete: Iterable[str], continuous: Iterable[str]
 ) -> dict[int, Kind]:
     """Column index → forced Kind; unknown names are an error."""
     forced: dict[int, Kind] = {}
@@ -323,13 +389,13 @@ def _overrides(
 def _check_continuous(
     name: str,
     names: Sequence[str],
-    kinds: dict[int, Kind],
+    kinds: Sequence[Kind],
     numbers: Iterable[int],
     cases: tuple[tuple[Value, ...], ...],
 ) -> None:
     """Every known value in a column of Kind continuous must be a number."""
     numbers = list(numbers)
-    for index, kind in kinds.items():
+    for index, kind in enumerate(kinds):
         if kind == "continuous":
             column = (case[index] for case in cases)
             _check_numeric(name, names[index], numbers, column)
