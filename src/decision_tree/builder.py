@@ -12,7 +12,7 @@ from typing import Literal
 from decision_tree.measures import EPSILON, gain_ratio_of
 from decision_tree.splitting import CandidateTest, Column, WeightedCases, columns
 from decision_tree.table import DecisionTable
-from decision_tree.tree import ClassDistribution, Leaf, Node, Tree, majority
+from decision_tree.tree import ClassDistribution, Leaf, Node, Tree
 
 # A plain alias, not a `type` statement, so the CLI can use it as a Typer option.
 Criterion = Literal["gain", "gain-ratio"]
@@ -73,12 +73,11 @@ class _Builder:
         self, cases: WeightedCases, available: frozenset[int], parent_majority: str
     ) -> Tree:
         distribution = self._distribution(cases)
-        if sum(distribution.values()) <= 0:
+        if distribution.total <= 0:
             return Leaf(parent_majority, distribution)
 
-        most_common = majority(distribution)
-        pure = sum(1 for w in distribution.values() if w > 0) == 1
-        best = None if pure else self._best_test(cases, available)
+        most_common = distribution.majority()
+        best = None if distribution.is_pure else self._best_test(cases, available)
         if best is None:
             return Leaf(most_common, distribution)
 
@@ -129,7 +128,6 @@ class _Builder:
 
     def _distribution(self, cases: WeightedCases) -> ClassDistribution:
         decisions = self.table.decisions
-        distribution = dict.fromkeys(self.table.classes, 0.0)
-        for i, weight in cases:
-            distribution[decisions[i]] += weight
-        return distribution
+        return ClassDistribution.count(
+            self.table.classes, ((decisions[i], weight) for i, weight in cases)
+        )

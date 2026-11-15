@@ -9,7 +9,7 @@ linearly; this is what reproduces the values in Quinlan's book.
 import math
 
 from decision_tree.measures import EPSILON
-from decision_tree.tree import Leaf, Node, Tree, majority
+from decision_tree.tree import Leaf, Node, Tree
 
 # Confidence Level → normal deviate, from C4.5's `prune.c`.
 _LEVELS = (0.0, 0.001, 0.005, 0.01, 0.05, 0.10, 0.20, 0.40, 1.00)
@@ -36,17 +36,26 @@ def prune(tree: Tree, confidence: float = DEFAULT_CONFIDENCE) -> Tree:
 def _prune(tree: Tree, confidence: float) -> tuple[Tree, float]:
     """The pruned subtree and its estimated errors."""
     if isinstance(tree, Leaf):
-        return tree, _estimated_errors(tree.total, tree.errors, confidence)
+        return tree, _leaf_errors(tree, confidence)
     branches: dict[str, Tree] = {}
     subtree_errors = 0.0
     for value, child in tree.branches.items():
         branches[value], child_errors = _prune(child, confidence)
         subtree_errors += child_errors
-    leaf = Leaf(majority(tree.distribution), tree.distribution)
-    leaf_errors = _estimated_errors(leaf.total, leaf.errors, confidence)
+    leaf = Leaf(tree.distribution.majority(), tree.distribution)
+    leaf_errors = _leaf_errors(leaf, confidence)
     if leaf_errors <= subtree_errors + EPSILON:
         return leaf, leaf_errors
     return Node(tree.test, branches, tree.distribution), subtree_errors
+
+
+def _leaf_errors(leaf: Leaf, confidence: float) -> float:
+    """Estimated errors of `leaf`, from its training weight and misclassified
+    weight."""
+    distribution = leaf.distribution
+    return _estimated_errors(
+        distribution.total, distribution.errors(leaf.decision), confidence
+    )
 
 
 def estimated_errors(weight: float, errors: float, *, confidence: float) -> float:

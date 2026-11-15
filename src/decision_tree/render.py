@@ -83,10 +83,11 @@ def leaf_text(leaf: Leaf) -> str:
 
 def leaf_counts(leaf: Leaf) -> str:
     """`(n)` or `(n/errors)`, one decimal each."""
-    errors = round(leaf.errors, 1)
+    total = leaf.distribution.total
+    errors = round(leaf.distribution.errors(leaf.decision), 1)
     if errors > 0:
-        return f"({leaf.total:.1f}/{errors:.1f})"
-    return f"({leaf.total:.1f})"
+        return f"({total:.1f}/{errors:.1f})"
+    return f"({total:.1f})"
 
 
 def _render_node(node: Node, depth: int, lines: list[str]) -> None:

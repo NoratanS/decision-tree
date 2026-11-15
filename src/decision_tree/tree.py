@@ -1,11 +1,85 @@
-"""Tests, Node and Leaf types, and classification (spec R5.6, R7)."""
+"""Class Distribution, Tests, Node and Leaf types, and classification (spec
+R5.6, R7)."""
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import ClassVar
 
-type ClassDistribution = dict[str, float]
-"""Weight of each Decision Class, in file order (zero weights included)."""
+
+@dataclass(frozen=True, eq=False)
+class ClassDistribution(Mapping[str, float]):
+    """Weight (or probability) of each Decision Class, in file order, zero
+    weights included.
+
+    Reads as a mapping from class to weight; it equals any mapping with the
+    same classes and weights.
+    """
+
+    classes: tuple[str, ...]
+    weights: tuple[float, ...]
+    """One per class, in the same order."""
+
+    def __post_init__(self) -> None:
+        if len(self.classes) != len(self.weights):
+            raise ValueError(
+                f"{len(self.classes)} classes, {len(self.weights)} weights"
+            )
+
+    @classmethod
+    def count(
+        cls, classes: Sequence[str], pairs: Iterable[tuple[str, float]]
+    ) -> ClassDistribution:
+        """Sum the Case Weight of each `(decision, weight)` pair per class.
+
+        Raises KeyError for a decision not in `classes`.
+        """
+        weights = dict.fromkeys(classes, 0.0)
+        for decision, weight in pairs:
+            weights[decision] += weight
+        return cls(tuple(weights), tuple(weights.values()))
+
+    @property
+    def total(self) -> float:
+        return sum(self.weights)
+
+    def majority(self) -> str:
+        """The class with the most weight (or probability); the first in file
+        order wins ties, so a distribution with no weight gives the first class
+        (spec R5.4, R7)."""
+        heaviest = max(range(len(self.weights)), key=self.weights.__getitem__)
+        return self.classes[heaviest]
+
+    def errors(self, decision: str) -> float:
+        """Weight of the Cases not of `decision`."""
+        return self.total - self[decision]
+
+    @property
+    def is_pure(self) -> bool:
+        """Exactly one class has weight."""
+        return sum(1 for w in self.weights if w > 0) == 1
+
+    def probabilities(self) -> ClassDistribution:
+        """The same classes with weights summing to 1.
+
+        Raises ValueError when there is no weight to share (see
+        `Leaf.probabilities` for an empty Leaf).
+        """
+        total = self.total
+        if total <= 0:
+            raise ValueError("a Class Distribution with no weight has no probabilities")
+        return ClassDistribution(self.classes, tuple(w / total for w in self.weights))
+
+    def __getitem__(self, decision: str) -> float:
+        try:
+            return self.weights[self.classes.index(decision)]
+        except ValueError:
+            raise KeyError(decision) from None
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self.classes)
+
+    def __len__(self) -> int:
+        return len(self.classes)
 
 
 @dataclass(frozen=True)
@@ -13,14 +87,16 @@ class Leaf:
     decision: str
     distribution: ClassDistribution
 
-    @property
-    def total(self) -> float:
-        return sum(self.distribution.values())
-
-    @property
-    def errors(self) -> float:
-        """Weight of the training cases here that are not of `decision`."""
-        return self.total - self.distribution[self.decision]
+    def probabilities(self) -> ClassDistribution:
+        """This Leaf's Class Distribution as probabilities; an empty Leaf (no
+        training weight) gives `decision` probability 1 (spec R7)."""
+        distribution = self.distribution
+        if distribution.total <= 0:
+            classes = distribution.classes
+            return ClassDistribution(
+                classes, tuple(float(c == self.decision) for c in classes)
+            )
+        return distribution.probabilities()
 
 
 # A Case with a Missing Value for the tested attribute (or, when classifying, a
@@ -29,7 +105,8 @@ class Leaf:
 # growth shares the Case's weight by the known weight of each branch
 # (`splitting.CandidateTest.branches`, C4.5's `Group` in `build.c`);
 # classification shares the branch's Class Distribution by its training weight,
-# `child.total` (`_combine_branches`, C4.5's `Classify` in `classify.c`).
+# `child.distribution.total` (`_combine_branches`, C4.5's `Classify` in
+# `classify.c`).
 
 
 @dataclass(frozen=True)
@@ -91,11 +168,6 @@ class Node:
     """One subtree per branch key of `test`, in the same order."""
     distribution: ClassDistribution
 
-    @property
-    def total(self) -> float:
-        """Training weight that reached this Node."""
-        return sum(self.distribution.values())
-
 
 type Tree = Node | Leaf
 
@@ -105,12 +177,6 @@ def size(tree: Tree) -> int:
     if isinstance(tree, Leaf):
         return 1
     return 1 + sum(size(child) for child in tree.branches.values())
-
-
-def majority(distribution: ClassDistribution) -> str:
-    """The class with the most weight (or probability); the first in file order
-    wins ties (spec R5.4, R7)."""
-    return max(distribution, key=distribution.__getitem__)
 
 
 def classify(tree: Tree, case: Sequence[str | None]) -> ClassDistribution:
@@ -126,19 +192,18 @@ def classify(tree: Tree, case: Sequence[str | None]) -> ClassDistribution:
         if branch is None:
             return _combine_branches(tree, case)
         tree = tree.branches[branch]
-    total = tree.total
-    if total <= 0:
-        return {c: float(c == tree.decision) for c in tree.distribution}
-    return {c: w / total for c, w in tree.distribution.items()}
+    return tree.probabilities()
 
 
 def _combine_branches(node: Node, case: Sequence[str | None]) -> ClassDistribution:
     """Classify `case` down every branch of `node`; sum the distributions, each
     weighted by its branch's share of the training weight."""
-    total = sum(child.total for child in node.branches.values())
-    combined = dict.fromkeys(node.distribution, 0.0)
+    total = sum(child.distribution.total for child in node.branches.values())
+    combined = [0.0] * len(node.distribution)
     for child in node.branches.values():
-        if share := child.total / total:
-            for decision, probability in classify(child, case).items():
-                combined[decision] += share * probability
-    return combined
+        if share := child.distribution.total / total:
+            # Every Class Distribution in a tree lists the same classes in
+            # the same order.
+            for k, probability in enumerate(classify(child, case).weights):
+                combined[k] += share * probability
+    return ClassDistribution(node.distribution.classes, tuple(combined))

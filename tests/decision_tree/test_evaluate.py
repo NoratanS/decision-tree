@@ -1,15 +1,15 @@
 from decision_tree.evaluate import classify_cases, evaluate
 from decision_tree.table import Cases, DecisionTable
-from decision_tree.tree import DiscreteTest, Leaf, Node
+from decision_tree.tree import ClassDistribution, DiscreteTest, Leaf, Node
 
 # a1 = x → yes, a1 = y → no
 TREE = Node(
     DiscreteTest("a1", 0, ("x", "y")),
     {
-        "x": Leaf("yes", {"yes": 2.0, "no": 0.0}),
-        "y": Leaf("no", {"yes": 0.0, "no": 2.0}),
+        "x": Leaf("yes", ClassDistribution(("yes", "no"), (2.0, 0.0))),
+        "y": Leaf("no", ClassDistribution(("yes", "no"), (0.0, 2.0))),
     },
-    {"yes": 2.0, "no": 2.0},
+    ClassDistribution(("yes", "no"), (2.0, 2.0)),
 )
 
 
@@ -45,7 +45,7 @@ def test_class_only_in_the_test_set_gets_a_row_and_column():
 
 
 def test_most_probable_class_is_predicted_and_ties_go_to_the_first_class():
-    tree = Leaf("no", {"yes": 1.0, "no": 1.0})
+    tree = Leaf("no", ClassDistribution(("yes", "no"), (1.0, 1.0)))
 
     result = evaluate(tree, table(("x", "yes")))
 
@@ -62,17 +62,20 @@ def test_classify_cases_predicts_the_most_probable_class_and_counts_correct_ones
     tree = Node(
         DiscreteTest("a1", 0, ("x", "y")),
         {
-            "x": Leaf("yes", {"yes": 2.0, "no": 0.0}),
-            "y": Leaf("no", {"yes": 1.0, "no": 1.0}),
+            "x": Leaf("yes", ClassDistribution(("yes", "no"), (2.0, 0.0))),
+            "y": Leaf("no", ClassDistribution(("yes", "no"), (1.0, 1.0))),
         },
-        {"yes": 3.0, "no": 1.0},
+        ClassDistribution(("yes", "no"), (3.0, 1.0)),
     )
 
     # y is a tie: yes comes first in file order.
     result = classify_cases(tree, Cases((("x",), ("y",)), decisions=("no", "yes")))
 
     assert result.classes == ("yes", "no")
-    assert result.distributions == ({"yes": 1.0, "no": 0.0}, {"yes": 0.5, "no": 0.5})
+    assert result.distributions == (
+        ClassDistribution(("yes", "no"), (1.0, 0.0)),
+        ClassDistribution(("yes", "no"), (0.5, 0.5)),
+    )
     assert result.predicted == ("yes", "yes")
     assert result.correct == 1
 

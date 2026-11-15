@@ -9,7 +9,9 @@ on the Cases with a known value (spec R4.5, ADR 0002).
 from bisect import bisect_right
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from itertools import pairwise
 from math import log2
+from operator import itemgetter
 from typing import NamedTuple
 
 from decision_tree.measures import EPSILON, Partition, gain, known_counts
@@ -18,9 +20,6 @@ from decision_tree.tree import DiscreteTest, Test, ThresholdTest
 
 type WeightedCases = list[tuple[int, float]]
 """The Cases at a Node, as (case index, Case Weight) pairs."""
-
-type WeightedValue[V] = tuple[V | None, int, float]
-"""One Case at a Node: (attribute value, Decision Class index, Case Weight)."""
 
 
 class CandidateTest(NamedTuple):
@@ -95,6 +94,9 @@ class DiscreteColumn:
     class_of: Sequence[int]
     """Each Case's Decision Class, as its index in `table.classes`."""
     n_classes: int
+    codes: Sequence[int]
+    """Each Case's value as the offset of its row in a flat table of class
+    counts, `n_classes` per value of `test`; -1 for a Missing Value."""
 
     @classmethod
     def of(
@@ -104,7 +106,10 @@ class DiscreteColumn:
         test = DiscreteTest(
             table.attributes[attribute], attribute, table.values(attribute)
         )
-        return cls(values, test, class_of, len(table.classes))
+        n_classes = len(table.classes)
+        row = {value: n_classes * v for v, value in enumerate(test.values)}
+        codes = [-1 if value is None else row[value] for value in values]
+        return cls(values, test, class_of, n_classes, codes)
 
     def candidate(
         self, cases: WeightedCases, *, min_cases: float
@@ -112,15 +117,20 @@ class DiscreteColumn:
         """The Candidate Test on this attribute at a Node holding `cases`, or
         None if it is not allowed.
 
-        The partition holds a branch for each value present among the known
-        Cases, in the order of `test.branch_keys`.
+        The partition holds a branch for each value with known weight among
+        the Cases, in the order of `test.branch_keys`.
         """
-        known, missing = _known(_weighted(self.values, self.class_of, cases))
-        branches: dict[str, list[float]] = {}
-        for value, k, weight in known:
-            counts = branches.setdefault(value, [0.0] * self.n_classes)
-            counts[k] += weight
-        partition = [branches[v] for v in self.test.values if v in branches]
+        codes, class_of, n_classes = self.codes, self.class_of, self.n_classes
+        counts = [0.0] * (len(self.test.values) * n_classes)
+        missing = 0.0
+        for i, weight in cases:
+            code = codes[i]
+            if code < 0:
+                missing += weight
+            else:
+                counts[code + class_of[i]] += weight
+        rows = (counts[c : c + n_classes] for c in range(0, len(counts), n_classes))
+        partition = [row for row in rows if any(row)]
         if not _enough_cases([sum(branch) for branch in partition], min_cases):
             return None
         return _scored(self.test, partition, missing, self)
@@ -175,19 +185,24 @@ class ContinuousColumn:
         every boundary, so the sweep minimises Info(X,T) instead of computing
         Gain, and keeps it in O(1) per Case (see `_info_split_sweep`).
         """
-        n_classes = self.n_classes
-        known, missing = _known(_weighted(self.values, self.class_of, cases))
-        ordered = sorted(known, key=lambda case: case[0])
+        n_classes, values, class_of = self.n_classes, self.values, self.class_of
+        known = [
+            (value, class_of[i], weight)
+            for i, weight in cases
+            if (value := values[i]) is not None
+        ]
+        missing = 0.0
+        if len(known) < len(cases):
+            missing = sum(weight for i, weight in cases if values[i] is None)
+        ordered = sorted(known, key=itemgetter(0))
         total = [0.0] * n_classes
         for _, k, weight in ordered:
             total[k] += weight
 
-        best_index = _info_split_sweep(ordered, total, min_cases)
-        if best_index is None:
+        best = _info_split_sweep(ordered, total, min_cases)
+        if best is None:
             return None
-        left = [0.0] * n_classes
-        for _, k, weight in ordered[: best_index + 1]:
-            left[k] += weight
+        best_index, left = best
         partition = (left, [t - c for t, c in zip(total, left, strict=True)])
         midpoint = (ordered[best_index][0] + ordered[best_index + 1][0]) / 2
         training_values = self.training_values
@@ -198,23 +213,6 @@ class ContinuousColumn:
 
 type Column = DiscreteColumn | ContinuousColumn
 """One Conditional Attribute read for tree growth; `columns` picks the kind."""
-
-
-def _weighted[V](
-    values: Sequence[V | None], class_of: Sequence[int], cases: WeightedCases
-) -> list[WeightedValue[V]]:
-    """`cases` as (attribute value, Decision Class index, Case Weight) triples."""
-    return [(values[i], class_of[i], weight) for i, weight in cases]
-
-
-def _known[V](
-    cases: Sequence[WeightedValue[V]],
-) -> tuple[list[tuple[V, int, float]], float]:
-    """The Cases with a known value, and the weight of those without."""
-    known = [case for case in cases if case[0] is not None]
-    if len(known) == len(cases):
-        return known, 0.0
-    return known, sum(weight for value, _, weight in cases if value is None)
 
 
 def _enough_cases(branch_weights: Iterable[float], min_cases: float) -> bool:
@@ -237,9 +235,10 @@ def _info_split_sweep(
     ordered: Sequence[tuple[float, int, float]],
     total: Sequence[float],
     min_cases: float,
-) -> int | None:
+) -> tuple[int, list[float]] | None:
     """Index of the last `<=` Case at the allowed boundary with the lowest
-    Info(X,T); the first such boundary on a tie. None if none is allowed.
+    Info(X,T), the first such boundary on a tie, with the class counts left of
+    it. None if no boundary is allowed.
 
     With f(x) = x·log2 x, a branch of weight n and class counts c holds
     n·Info = f(n) − Σ f(c). The sweep keeps Σ f(c) of both branches as running
@@ -253,9 +252,11 @@ def _info_split_sweep(
     xlogx_right = list(map(_xlog2x, total))
     left_sum, right_sum = 0.0, sum(xlogx_right)  # Σ f(c) of each branch
     left_weight = 0.0
-    best, best_info = None, 0.0
-    for i in range(len(ordered) - 1):
-        value, k, weight = ordered[i]
+    best: tuple[int, list[float]] | None = None
+    best_info = 0.0
+    i = -1
+    for (value, k, weight), (next_value, _, _) in pairwise(ordered):
+        i += 1
         count = left[k] = left[k] + weight
         xlogx = count * log2(count) if count > 0 else 0.0
         left_sum += xlogx - xlogx_left[k]
@@ -265,18 +266,20 @@ def _info_split_sweep(
         right_sum += xlogx - xlogx_right[k]
         xlogx_right[k] = xlogx
         left_weight += weight
-        if value == ordered[i + 1][0]:
+        if value == next_value or left_weight < min_cases:
             continue
         right_weight = total_weight - left_weight
+        if right_weight < min_cases:
+            break  # the right branch only shrinks from here: no allowed boundary
+        # Both weights are at least `min_cases` > 0 (`BuildOptions`) here.
         info_split = (
-            _xlog2x(left_weight) - left_sum + _xlog2x(right_weight) - right_sum
+            left_weight * log2(left_weight)
+            - left_sum
+            + right_weight * log2(right_weight)
+            - right_sum
         ) / total_weight
-        # The `-m` rule is checked only on a would-be best boundary: calling it
-        # at every boundary costs a fifth of tree growth.
-        if (best is None or info_split < best_info - EPSILON) and _enough_cases(
-            (left_weight, right_weight), min_cases
-        ):
-            best, best_info = i, info_split
+        if best is None or info_split < best_info - EPSILON:
+            best, best_info = (i, list(left)), info_split
     return best
 
 

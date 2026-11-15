@@ -5,7 +5,7 @@ import pytest
 from decision_tree.builder import BuildOptions, build_tree
 from decision_tree.render import render_plain
 from decision_tree.table import ReadOptions, load_table
-from decision_tree.tree import Leaf, Node, classify
+from decision_tree.tree import ClassDistribution, Leaf, Node, classify
 
 DATA = Path(__file__).parent.parent / "data"
 TEST_TABLE = DATA / "test_table.txt"
@@ -91,11 +91,13 @@ def test_every_node_and_leaf_stores_its_class_distribution():
     tree = build_tree(load_table(DATA / "stock_market.txt"))
 
     assert isinstance(tree, Node)
-    assert tree.distribution == {"down": 5.0, "up": 5.0}
+    assert tree.distribution == ClassDistribution(("down", "up"), (5.0, 5.0))
     mid = tree.branches["mid"]
     assert isinstance(mid, Node)
-    assert mid.distribution == {"down": 2.0, "up": 2.0}
-    assert mid.branches["no"] == Leaf("up", {"down": 0.0, "up": 2.0})
+    assert mid.distribution == ClassDistribution(("down", "up"), (2.0, 2.0))
+    assert mid.branches["no"] == Leaf(
+        "up", ClassDistribution(("down", "up"), (0.0, 2.0))
+    )
 
 
 def test_pure_table_is_a_single_leaf(write_table):

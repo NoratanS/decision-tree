@@ -17,34 +17,49 @@ from decision_tree.render import (
     render_plain,
     set_name,
 )
-from decision_tree.tree import DiscreteTest, Leaf, Node, ThresholdTest
+from decision_tree.tree import (
+    ClassDistribution,
+    DiscreteTest,
+    Leaf,
+    Node,
+    ThresholdTest,
+)
 
 
 def test_leaf_without_errors_shows_its_weight():
-    assert render_plain(Leaf("up", {"down": 0.0, "up": 3.0})) == "up (3.0)"
+    assert (
+        render_plain(Leaf("up", ClassDistribution(("down", "up"), (0.0, 3.0))))
+        == "up (3.0)"
+    )
 
 
 def test_leaf_with_errors_shows_weight_and_errors():
-    assert render_plain(Leaf("bear", {"bear": 3.0, "bare": 2.0})) == "bear (5.0/2.0)"
+    assert (
+        render_plain(Leaf("bear", ClassDistribution(("bear", "bare"), (3.0, 2.0))))
+        == "bear (5.0/2.0)"
+    )
 
 
 def test_fractional_weights_have_one_decimal():
-    assert render_plain(Leaf("yes", {"yes": 2.0, "no": 0.375})) == "yes (2.4/0.4)"
+    assert (
+        render_plain(Leaf("yes", ClassDistribution(("yes", "no"), (2.0, 0.375))))
+        == "yes (2.4/0.4)"
+    )
 
 
 def test_nested_nodes_are_indented_with_bars():
     inner = Node(
         DiscreteTest("a2", 1, ("p", "q")),
         {
-            "p": Leaf("yes", {"yes": 2.0, "no": 0.0}),
-            "q": Leaf("no", {"yes": 0.0, "no": 1.0}),
+            "p": Leaf("yes", ClassDistribution(("yes", "no"), (2.0, 0.0))),
+            "q": Leaf("no", ClassDistribution(("yes", "no"), (0.0, 1.0))),
         },
-        {"yes": 2.0, "no": 1.0},
+        ClassDistribution(("yes", "no"), (2.0, 1.0)),
     )
     tree = Node(
         DiscreteTest("a1", 0, ("x", "y")),
-        {"x": inner, "y": Leaf("no", {"yes": 0.0, "no": 3.0})},
-        {"yes": 2.0, "no": 4.0},
+        {"x": inner, "y": Leaf("no", ClassDistribution(("yes", "no"), (0.0, 3.0)))},
+        ClassDistribution(("yes", "no"), (2.0, 4.0)),
     )
 
     assert render_plain(tree) == (
@@ -56,10 +71,12 @@ def test_threshold_tests_print_like_c45():
     tree = Node(
         ThresholdTest("humidity", 2, 75.0),
         {
-            "<=": Leaf("Play", {"Play": 2.0, "Don't Play": 0.0}),
-            ">": Leaf("Don't Play", {"Play": 0.0, "Don't Play": 3.0}),
+            "<=": Leaf("Play", ClassDistribution(("Play", "Don't Play"), (2.0, 0.0))),
+            ">": Leaf(
+                "Don't Play", ClassDistribution(("Play", "Don't Play"), (0.0, 3.0))
+            ),
         },
-        {"Play": 2.0, "Don't Play": 3.0},
+        ClassDistribution(("Play", "Don't Play"), (2.0, 3.0)),
     )
 
     assert render_plain(tree) == (
@@ -74,8 +91,11 @@ def test_threshold_tests_print_like_c45():
 def test_thresholds_print_without_a_needless_decimal_point(threshold, text):
     tree = Node(
         ThresholdTest("a1", 0, threshold),
-        {"<=": Leaf("y", {"y": 1.0}), ">": Leaf("y", {"y": 1.0})},
-        {"y": 2.0},
+        {
+            "<=": Leaf("y", ClassDistribution(("y",), (1.0,))),
+            ">": Leaf("y", ClassDistribution(("y",), (1.0,))),
+        },
+        ClassDistribution(("y",), (2.0,)),
     )
 
     assert render_plain(tree).startswith(f"a1 <= {text} : ")
@@ -87,7 +107,10 @@ GOLF_CLASSES = ("Play", "Don't Play")
 def test_classification_shows_each_case_with_its_class_and_distribution():
     result = Classification(
         GOLF_CLASSES,
-        ({"Play": 0.4, "Don't Play": 0.6}, {"Play": 1.0, "Don't Play": 0.0}),
+        (
+            ClassDistribution(("Play", "Don't Play"), (0.4, 0.6)),
+            ClassDistribution(("Play", "Don't Play"), (1.0, 0.0)),
+        ),
         decisions=None,
     )
 
@@ -102,9 +125,9 @@ def test_classification_with_decisions_marks_wrong_predictions_and_gives_accurac
     result = Classification(
         GOLF_CLASSES,
         (
-            {"Play": 0.4, "Don't Play": 0.6},
-            {"Play": 1.0, "Don't Play": 0.0},
-            {"Play": 0.5, "Don't Play": 0.5},
+            ClassDistribution(("Play", "Don't Play"), (0.4, 0.6)),
+            ClassDistribution(("Play", "Don't Play"), (1.0, 0.0)),
+            ClassDistribution(("Play", "Don't Play"), (0.5, 0.5)),
         ),
         decisions=("Play", "Play", "Play"),
     )
@@ -126,7 +149,10 @@ def roles(block: TableBlock) -> list[list[str | None]]:
 def test_classification_marks_correct_and_wrong_predictions_by_role():
     result = Classification(
         GOLF_CLASSES,
-        ({"Play": 0.4, "Don't Play": 0.6}, {"Play": 1.0, "Don't Play": 0.0}),
+        (
+            ClassDistribution(("Play", "Don't Play"), (0.4, 0.6)),
+            ClassDistribution(("Play", "Don't Play"), (1.0, 0.0)),
+        ),
         decisions=("Play", "Play"),
     )
 
@@ -141,7 +167,9 @@ def test_classification_marks_correct_and_wrong_predictions_by_role():
 
 def test_classification_without_decisions_has_no_roles():
     result = Classification(
-        GOLF_CLASSES, ({"Play": 0.4, "Don't Play": 0.6},), decisions=None
+        GOLF_CLASSES,
+        (ClassDistribution(("Play", "Don't Play"), (0.4, 0.6)),),
+        decisions=None,
     )
 
     [table] = classification_blocks(result)
@@ -165,12 +193,12 @@ def test_set_name_describes_where_the_set_comes_from(evaluated_set, name):
 SPLIT_TREE = Node(
     DiscreteTest("a1", 0, ("x", "y")),
     {
-        "x": Leaf("yes", {"yes": 3.0, "no": 0.0}),
-        "y": Leaf("no", {"yes": 1.0, "no": 2.0}),
+        "x": Leaf("yes", ClassDistribution(("yes", "no"), (3.0, 0.0))),
+        "y": Leaf("no", ClassDistribution(("yes", "no"), (1.0, 2.0))),
     },
-    {"yes": 4.0, "no": 2.0},
+    ClassDistribution(("yes", "no"), (4.0, 2.0)),
 )
-ONE_LEAF = Leaf("yes", {"yes": 4.0, "no": 2.0})
+ONE_LEAF = Leaf("yes", ClassDistribution(("yes", "no"), (4.0, 2.0)))
 
 
 def evaluation(yes: tuple[int, int], no: tuple[int, int]) -> Evaluation:

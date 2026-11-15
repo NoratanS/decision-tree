@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from functools import cached_property
 
 from decision_tree.table import Cases, DecisionTable
-from decision_tree.tree import ClassDistribution, Tree, classify, majority
+from decision_tree.tree import ClassDistribution, Tree, classify
 
 
 @dataclass(frozen=True)
@@ -57,7 +57,7 @@ class Classification:
     def predicted(self) -> tuple[str, ...]:
         """Most probable class of each Case; ties go to the class first in file
         order (spec R7)."""
-        return tuple(map(majority, self.distributions))
+        return tuple(d.majority() for d in self.distributions)
 
     @property
     def rows(self) -> zip[tuple[ClassDistribution, str, str | None]]:
@@ -77,7 +77,7 @@ class Classification:
 def classify_cases(tree: Tree, cases: Cases) -> Classification:
     """Classify every Case with `tree`."""
     return Classification(
-        classes=tuple(tree.distribution),
+        classes=tree.distribution.classes,
         distributions=tuple(classify(tree, case) for case in cases.cases),
         decisions=cases.decisions,
     )

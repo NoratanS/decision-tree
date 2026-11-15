@@ -4,7 +4,14 @@ import pytest
 
 from decision_tree.builder import build_tree
 from decision_tree.table import ReadOptions, load_table
-from decision_tree.tree import DiscreteTest, Leaf, Node, ThresholdTest, classify
+from decision_tree.tree import (
+    ClassDistribution,
+    DiscreteTest,
+    Leaf,
+    Node,
+    ThresholdTest,
+    classify,
+)
 
 DATA = Path(__file__).parent.parent / "data"
 
@@ -23,17 +30,17 @@ def test_each_stock_market_case_gets_its_training_decision_with_probability_one(
 def test_impure_leaf_gives_its_class_proportions():
     tree = Node(
         DiscreteTest("a1", 0, ("x",)),
-        {"x": Leaf("yes", {"yes": 3.0, "no": 1.0})},
-        {"yes": 3.0, "no": 1.0},
+        {"x": Leaf("yes", ClassDistribution(("yes", "no"), (3.0, 1.0)))},
+        ClassDistribution(("yes", "no"), (3.0, 1.0)),
     )
 
-    assert classify(tree, ("x",)) == {"yes": 0.75, "no": 0.25}
+    assert classify(tree, ("x",)) == ClassDistribution(("yes", "no"), (0.75, 0.25))
 
 
 def test_empty_leaf_gives_its_class_with_probability_one():
-    tree = Leaf("yes", {"yes": 0.0, "no": 0.0})
+    tree = Leaf("yes", ClassDistribution(("yes", "no"), (0.0, 0.0)))
 
-    assert classify(tree, ()) == {"yes": 1.0, "no": 0.0}
+    assert classify(tree, ()) == ClassDistribution(("yes", "no"), (1.0, 0.0))
 
 
 def test_golf_outlook_never_seen_in_training_is_classified_as_missing():
@@ -59,10 +66,12 @@ def humidity_node():
     return Node(
         ThresholdTest("humidity", 2, 75.0),
         {
-            "<=": Leaf("Play", {"Play": 2.0, "Don't Play": 0.0}),
-            ">": Leaf("Don't Play", {"Play": 0.0, "Don't Play": 3.0}),
+            "<=": Leaf("Play", ClassDistribution(("Play", "Don't Play"), (2.0, 0.0))),
+            ">": Leaf(
+                "Don't Play", ClassDistribution(("Play", "Don't Play"), (0.0, 3.0))
+            ),
         },
-        {"Play": 2.0, "Don't Play": 3.0},
+        ClassDistribution(("Play", "Don't Play"), (2.0, 3.0)),
     )
 
 
@@ -98,15 +107,15 @@ def test_missing_value_combines_every_branch_weighted_by_its_size():
     tree = Node(
         DiscreteTest("a1", 0, ("x", "y", "z")),
         {
-            "x": Leaf("yes", {"yes": 3.0, "no": 1.0}),
-            "y": Leaf("no", {"yes": 0.0, "no": 4.0}),
-            "z": Leaf("yes", {"yes": 0.0, "no": 0.0}),
+            "x": Leaf("yes", ClassDistribution(("yes", "no"), (3.0, 1.0))),
+            "y": Leaf("no", ClassDistribution(("yes", "no"), (0.0, 4.0))),
+            "z": Leaf("yes", ClassDistribution(("yes", "no"), (0.0, 0.0))),
         },
-        {"yes": 3.0, "no": 5.0},
+        ClassDistribution(("yes", "no"), (3.0, 5.0)),
     )
 
     # x: 4/8 * (0.75, 0.25), y: 4/8 * (0, 1), z: empty, no weight.
-    assert classify(tree, (None,)) == {"yes": 0.375, "no": 0.625}
+    assert classify(tree, (None,)) == ClassDistribution(("yes", "no"), (0.375, 0.625))
 
 
 OUTLOOK = DiscreteTest("outlook", 0, ("sunny", "overcast", "rain"))
@@ -144,3 +153,92 @@ def test_tests_know_their_branches_and_whether_the_attribute_stays_available():
     # A Discrete Attribute is tested at most once per path (spec R5.2).
     assert not OUTLOOK.keeps_attribute
     assert HUMIDITY.keeps_attribute
+
+
+def test_class_distribution_reads_like_a_mapping_in_file_order():
+    distribution = ClassDistribution(("yes", "no", "maybe"), (2.0, 3.0, 0.0))
+
+    assert distribution["no"] == 3.0
+    assert list(distribution) == ["yes", "no", "maybe"]
+    assert list(distribution.items()) == [("yes", 2.0), ("no", 3.0), ("maybe", 0.0)]
+    assert distribution == {"maybe": 0.0, "no": 3.0, "yes": 2.0}
+    with pytest.raises(KeyError):
+        distribution["unknown"]
+
+
+def test_class_distribution_needs_one_weight_per_class():
+    with pytest.raises(ValueError, match="2 classes, 1 weights"):
+        ClassDistribution(("yes", "no"), (1.0,))
+
+
+def test_class_distribution_counts_case_weights_per_class_in_file_order():
+    pairs = [("no", 1.0), ("yes", 0.5), ("no", 2.0), ("yes", 0.25)]
+
+    distribution = ClassDistribution.count(("yes", "no", "maybe"), pairs)
+
+    assert distribution.classes == ("yes", "no", "maybe")
+    assert distribution.weights == (0.75, 3.0, 0.0)
+    assert distribution.total == 3.75
+
+
+@pytest.mark.parametrize(
+    ("weights", "expected"),
+    [
+        ((1.0, 3.0, 2.0), "no"),
+        # Ties go to the class first in file order (spec R5.4, R7).
+        ((1.0, 3.0, 3.0), "no"),
+        ((2.0, 0.0, 2.0), "yes"),
+        # No weight at all: the first class.
+        ((0.0, 0.0, 0.0), "yes"),
+    ],
+)
+def test_class_distribution_majority_is_the_heaviest_class_first_in_file_order(
+    weights, expected
+):
+    distribution = ClassDistribution(("yes", "no", "maybe"), weights)
+
+    assert distribution.majority() == expected
+
+
+def test_class_distribution_errors_are_the_weight_not_of_the_decision():
+    distribution = ClassDistribution(("yes", "no", "maybe"), (2.0, 3.0, 0.5))
+
+    assert distribution.errors("no") == 2.5
+    assert distribution.errors("maybe") == 5.0
+
+
+@pytest.mark.parametrize(
+    ("weights", "pure"),
+    [((0.0, 4.0), True), ((1.0, 4.0), False), ((0.0, 0.0), False)],
+)
+def test_class_distribution_is_pure_when_one_class_holds_all_the_weight(weights, pure):
+    assert ClassDistribution(("yes", "no"), weights).is_pure is pure
+
+
+def test_class_distribution_probabilities_share_the_weight_out_to_one():
+    distribution = ClassDistribution(("yes", "no", "maybe"), (1.0, 3.0, 0.0))
+
+    probabilities = distribution.probabilities()
+
+    assert probabilities.classes == ("yes", "no", "maybe")
+    assert probabilities.weights == (0.25, 0.75, 0.0)
+
+
+def test_class_distribution_without_weight_has_no_probabilities():
+    with pytest.raises(ValueError, match="no weight"):
+        ClassDistribution(("yes", "no"), (0.0, 0.0)).probabilities()
+
+
+def test_leaf_probabilities_are_its_class_proportions():
+    leaf = Leaf("no", ClassDistribution(("yes", "no"), (1.0, 3.0)))
+
+    assert leaf.probabilities() == {"yes": 0.25, "no": 0.75}
+
+
+def test_empty_leaf_probabilities_give_its_decision_probability_one():
+    leaf = Leaf("no", ClassDistribution(("yes", "no", "maybe"), (0.0, 0.0, 0.0)))
+
+    probabilities = leaf.probabilities()
+
+    assert probabilities.classes == ("yes", "no", "maybe")
+    assert probabilities.weights == (0.0, 1.0, 0.0)
