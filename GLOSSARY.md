@@ -78,7 +78,7 @@ What a Node asks of a case's value of one conditional attribute: a discrete test
 _Avoid_: split, condition
 
 **Candidate Test**:
-A test that is allowed at a Node (at least two branches hold the minimum number of cases), scored by its Gain; tree growth picks one of them or makes a Leaf.
+A test that is allowed at a Node (at least two branches hold the minimum number of cases), scored by its Gain and its Gain Ratio; tree growth picks one of them or makes a Leaf.
 _Avoid_: candidate split
 
 **Leaf**:

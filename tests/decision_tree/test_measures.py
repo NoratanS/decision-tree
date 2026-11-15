@@ -1,5 +1,3 @@
-from collections import Counter
-from functools import cache
 from pathlib import Path
 
 import pytest
@@ -14,7 +12,7 @@ from decision_tree.measures import (
     known_counts,
     split_info,
 )
-from decision_tree.table import DecisionTable, load_table
+from decision_tree.table import load_table
 
 DATA = Path(__file__).parent.parent / "data"
 
@@ -139,106 +137,10 @@ def test_gain_ratio_with_missing_values():
     )
 
 
-# test_table.txt (script table 1.2). The partitions are counted from the file,
-# so these tests check the loader and the measures together.
-@cache
-def load_test_table() -> DecisionTable:
-    return load_table(DATA / "test_table.txt")
-
-
-def class_counts_of_test_table() -> list[int]:
-    table = load_test_table()
-    return [table.decisions.count(c) for c in table.classes]
-
-
-def partition_on_test_table(attribute: str) -> list[list[int]]:
-    """Class counts per value of `attribute`, values in file order."""
-    table = load_test_table()
-    column = table.attributes.index(attribute)
-    branches = Counter(
-        (case[column], decision)
-        for case, decision in zip(table.cases, table.decisions, strict=True)
-    )
-    values = dict.fromkeys(case[column] for case in table.cases)
-    return [[branches[v, c] for c in table.classes] for v in values]
-
-
-def _info_split(_counts, partition):
-    return info_split(partition)
-
-
-def _split_info(_counts, partition):
-    return split_info(partition)
-
-
-# docs/assignment.md, test_table.txt table, one row per measure.
-TEST_TABLE_MEASURES = {
-    "Info(X,T)": (
-        _info_split,
-        {
-            "a1": 0.7505430557959409,
-            "a2": 0.9727652780181631,
-            "a3": 0.9727652780181631,
-            "a4": 1.122207274456653,
-        },
-    ),
-    "Gain": (
-        gain,
-        {
-            "a1": 0.7799500009615414,
-            "a2": 0.5577277787393192,
-            "a3": 0.5577277787393192,
-            "a4": 0.40828578230082946,
-        },
-    ),
-    "Split Info": (
-        _split_info,
-        {
-            "a1": 1.5304930567574826,
-            "a2": 1.5304930567574824,
-            "a3": 0.9182958340544896,
-            "a4": 0.9910760598382222,
-        },
-    ),
-    "Gain Ratio": (
-        gain_ratio,
-        {
-            "a1": 0.5096070168485123,
-            "a2": 0.36441052527276846,
-            "a3": 0.6073508754546141,
-            "a4": 0.41196210749705303,
-        },
-    ),
-}
-
-
+# test_table.txt (script table 1.2), docs/assignment.md. Gain and Gain Ratio of
+# its attributes are checked through the columns in test_splitting.py.
 def test_info_of_test_table():
-    assert info(class_counts_of_test_table()) == pytest.approx(1.5304930567574824)
+    table = load_table(DATA / "test_table.txt")
+    counts = [table.decisions.count(c) for c in table.classes]
 
-
-@pytest.mark.parametrize(
-    ("measure", "attribute", "expected"),
-    [
-        (name, attribute, expected)
-        for name, (_, values) in TEST_TABLE_MEASURES.items()
-        for attribute, expected in values.items()
-    ],
-)
-def test_measures_on_test_table_match_the_script(measure, attribute, expected):
-    compute = TEST_TABLE_MEASURES[measure][0]
-    partition = partition_on_test_table(attribute)
-
-    assert compute(class_counts_of_test_table(), partition) == pytest.approx(expected)
-
-
-def test_a3_beats_a2_on_gain_ratio_though_they_tie_on_gain():
-    # Script §5: a3 wins because it has fewer values.
-    counts = class_counts_of_test_table()
-    a2, a3 = partition_on_test_table("a2"), partition_on_test_table("a3")
-    ratios = {
-        a: gain_ratio(counts, partition_on_test_table(a))
-        for a in load_test_table().attributes
-    }
-
-    assert gain(counts, a2) == pytest.approx(gain(counts, a3))
-    assert max(ratios, key=ratios.__getitem__) == "a3"
+    assert info(counts) == pytest.approx(1.5304930567574824)

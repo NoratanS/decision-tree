@@ -14,7 +14,13 @@ from math import log2
 from operator import itemgetter
 from typing import NamedTuple
 
-from decision_tree.measures import EPSILON, Partition, gain, known_counts
+from decision_tree.measures import (
+    EPSILON,
+    Partition,
+    gain,
+    gain_ratio_of,
+    known_counts,
+)
 from decision_tree.table import DecisionTable
 from decision_tree.tree import DiscreteTest, Test, ThresholdTest
 
@@ -25,19 +31,14 @@ type WeightedCases = list[tuple[int, float]]
 class CandidateTest(NamedTuple):
     """A Test allowed at a Node: at least two of its branches hold `min_cases`
     or more of the known weight.
-
-    `partition` leaves out a discrete branch with no known weight, while
-    `branches` (and so `Node.branches`) keeps one per training value. Gain and
-    Split Info are the same either way: 0·log 0 = 0.
     """
 
     test: Test
-    partition: Partition
-    """Weighted class counts per branch, known values only."""
-    missing: float
-    """Weight of the Cases with a Missing Value for the attribute."""
     gain: float
     """Gain on the known Cases, scaled by their fraction of the weight."""
+    gain_ratio: float
+    """`gain` over Split Info, which counts the Missing Value weight as one
+    more branch; 0 when Split Info is 0."""
     column: Column
     """The column of the tested attribute, which `branches` routes."""
 
@@ -226,9 +227,16 @@ def _enough_cases(branch_weights: Iterable[float], min_cases: float) -> bool:
 def _scored(
     test: Test, partition: Partition, missing: float, column: Column
 ) -> CandidateTest:
-    """`test` with its Gain on the known Cases, scaled by the known fraction."""
-    score = gain(known_counts(partition), partition, missing=missing)
-    return CandidateTest(test, partition, missing, score, column)
+    """`test` with its Gain and Gain Ratio, from `partition`, the weighted class
+    counts per branch of the known Cases, and `missing`, the weight of the rest.
+
+    `partition` may leave out a discrete branch with no known weight, while
+    `CandidateTest.branches` keeps one per training value. Gain and Split Info
+    are the same either way: 0·log 0 = 0.
+    """
+    known_gain = gain(known_counts(partition), partition, missing=missing)
+    ratio = gain_ratio_of(known_gain, partition, missing)
+    return CandidateTest(test, known_gain, ratio, column)
 
 
 def _info_split_sweep(

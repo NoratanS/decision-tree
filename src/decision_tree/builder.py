@@ -9,7 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
-from decision_tree.measures import EPSILON, gain_ratio_of
+from decision_tree.measures import EPSILON
 from decision_tree.splitting import CandidateTest, Column, WeightedCases, columns
 from decision_tree.table import DecisionTable
 from decision_tree.tree import ClassDistribution, Leaf, Node, Tree
@@ -21,7 +21,7 @@ Criterion = Literal["gain", "gain-ratio"]
 
 _SCORES: dict[Criterion, Callable[[CandidateTest], float]] = {
     "gain": lambda c: c.gain,
-    "gain-ratio": lambda c: gain_ratio_of(c.gain, c.partition, c.missing),
+    "gain-ratio": lambda c: c.gain_ratio,
 }
 
 

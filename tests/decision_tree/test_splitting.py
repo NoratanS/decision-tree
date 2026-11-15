@@ -1,12 +1,16 @@
+import random
+from functools import cache
 from pathlib import Path
 
 import pytest
 
+from decision_tree.measures import gain, gain_ratio, known_counts
 from decision_tree.splitting import columns
 from decision_tree.table import ReadOptions, load_table
 from decision_tree.tree import DiscreteTest, ThresholdTest
 
-GOLF = Path(__file__).parent.parent / "data" / "golf.txt"
+DATA = Path(__file__).parent.parent / "data"
+GOLF = DATA / "golf.txt"
 OUTLOOK, HUMIDITY = 0, 2
 # Rows of golf.txt (0 is the first Case) with outlook = sunny.
 SUNNY = (1, 2, 7, 8, 10)
@@ -35,9 +39,13 @@ def test_golf_sunny_humidity_threshold_is_75_not_the_midpoint():
 
     assert candidate is not None
     assert candidate.test == ThresholdTest("humidity", HUMIDITY, 75.0)
-    assert candidate.partition == ([2.0, 0.0], [0.0, 3.0])
-    assert candidate.missing == 0.0
+    assert candidate.branches(whole(*SUNNY)) == {
+        "<=": whole(8, 10),
+        ">": whole(1, 2, 7),
+    }
+    # A pure 2 | 3 split: Gain and Split Info are both Info(2, 3).
     assert candidate.gain == pytest.approx(0.971, abs=1e-3)
+    assert candidate.gain_ratio == pytest.approx(1.0)
 
 
 def column_a1(write_table, text, kind="continuous"):
@@ -80,12 +88,19 @@ def test_both_branches_need_min_cases(write_table):
 
 
 def test_counts_are_weighted(write_table):
+    # Each branch holds one Case of weight 0.5: enough for -m 0.5, not 0.6.
     a1 = column_a1(write_table, "1 a\n2 b\n")
 
     candidate = a1.candidate(every(a1, 0.5), min_cases=0.5)
 
     assert candidate is not None
-    assert candidate.partition == ([0.5, 0.0], [0.0, 0.5])
+    assert candidate.gain == pytest.approx(1.0)
+    assert a1.candidate(every(a1, 0.5), min_cases=0.6) is None
+
+
+# Gain 0.8 over Split Info of branches 2 | 2 plus 1 missing:
+# I(0.4, 0.4, 0.2) = 1.5219280948873621.
+SCALED_GAIN_RATIO = 0.5256490123859682
 
 
 def test_threshold_candidate_skips_missing_values_and_scales_gain(write_table):
@@ -97,9 +112,8 @@ def test_threshold_candidate_skips_missing_values_and_scales_gain(write_table):
 
     assert candidate is not None
     assert candidate.test.threshold == 2.0
-    assert candidate.partition == ([2.0, 0.0], [0.0, 2.0])
-    assert candidate.missing == 1.0
     assert candidate.gain == pytest.approx(0.8)
+    assert candidate.gain_ratio == pytest.approx(SCALED_GAIN_RATIO)
 
 
 @pytest.mark.parametrize(
@@ -128,9 +142,8 @@ def test_discrete_candidate_scores_known_cases_and_scales_gain_by_known_fraction
 
     assert candidate is not None
     assert candidate.test == DiscreteTest("a1", 0, ("p", "q"))
-    assert candidate.partition == [[2.0, 0.0], [0.0, 2.0]]
-    assert candidate.missing == 1.0
     assert candidate.gain == pytest.approx(0.8)
+    assert candidate.gain_ratio == pytest.approx(SCALED_GAIN_RATIO)
 
 
 def test_discrete_candidate_needs_two_branches_of_min_cases(write_table):
@@ -189,15 +202,14 @@ def test_branches_spread_a_missing_value_by_known_weight(write_table):
 
 
 def test_an_empty_discrete_branch_stays_empty(write_table):
-    # No known overcast Case is at this Node: the partition leaves overcast
-    # out, the branch stays and gets none of the missing Case's weight.
+    # No known overcast Case is at this Node: the branch stays and gets none
+    # of the missing Case's weight.
     outlook = columns(load_golf_missing_outlook(write_table))[OUTLOOK]
     cases = whole(*SUNNY, *RAIN, MISSING_ROW)
     candidate = outlook.candidate(cases, min_cases=2)
 
     branches = candidate.branches(cases)
 
-    assert len(candidate.partition) == 2
     assert branches == {
         "overcast": [],
         "sunny": [*whole(*SUNNY), (MISSING_ROW, 0.5)],
@@ -209,18 +221,108 @@ def test_an_empty_discrete_branch_stays_empty(write_table):
     ("attribute", "rows"),
     [(OUTLOOK, range(14)), (1, range(14)), (HUMIDITY, SUNNY), (3, RAIN)],
 )
-def test_the_split_agrees_with_the_scored_partition(attribute, rows):
+def test_gain_from_the_branches_equals_the_candidates_gain(attribute, rows):
     table = load_golf()
     cases = whole(*rows)
     candidate = columns(table)[attribute].candidate(cases, min_cases=2)
     assert candidate is not None
 
-    # The partition leaves out empty branches; none is empty here.
-    split = []
-    for branch in candidate.branches(cases).values():
-        counts = dict.fromkeys(table.classes, 0.0)
-        for i, weight in branch:
-            counts[table.decisions[i]] += weight
-        split.append(list(counts.values()))
+    split = class_counts_per_branch(table, candidate.branches(cases))
 
-    assert split == [list(counts) for counts in candidate.partition]
+    assert gain(known_counts(split), split) == pytest.approx(candidate.gain)
+    assert gain_ratio(known_counts(split), split) == pytest.approx(candidate.gain_ratio)
+
+
+def class_counts_per_branch(table, branches):
+    counts = []
+    for branch in branches.values():
+        row = dict.fromkeys(table.classes, 0.0)
+        for i, weight in branch:
+            row[table.decisions[i]] += weight
+        counts.append(list(row.values()))
+    return counts
+
+
+# test_table.txt (script table 1.2), docs/assignment.md: Gain and Gain Ratio
+# of each attribute at the root, counted by the columns.
+TEST_TABLE = DATA / "test_table.txt"
+TEST_TABLE_SCORES = {
+    "a1": (0.7799500009615414, 0.5096070168485123),
+    "a2": (0.5577277787393192, 0.36441052527276846),
+    "a3": (0.5577277787393192, 0.6073508754546141),
+    "a4": (0.40828578230082946, 0.41196210749705303),
+}
+
+
+@cache
+def root_candidates_of_test_table():
+    table = load_table(TEST_TABLE)
+    cases = whole(*range(len(table.cases)))
+    return {
+        name: column.candidate(cases, min_cases=1)
+        for name, column in zip(table.attributes, columns(table), strict=True)
+    }
+
+
+@pytest.mark.parametrize(("attribute", "scores"), TEST_TABLE_SCORES.items())
+def test_scores_on_test_table_match_the_script(attribute, scores):
+    candidate = root_candidates_of_test_table()[attribute]
+    expected_gain, expected_gain_ratio = scores
+
+    assert candidate.gain == pytest.approx(expected_gain)
+    assert candidate.gain_ratio == pytest.approx(expected_gain_ratio)
+
+
+def test_a3_beats_a2_on_gain_ratio_though_they_tie_on_gain():
+    # Script §5: a3 wins because it has fewer values.
+    candidates = root_candidates_of_test_table()
+
+    assert candidates["a2"].gain == pytest.approx(candidates["a3"].gain)
+    assert max(candidates, key=lambda a: candidates[a].gain_ratio) == "a3"
+
+
+def random_continuous_table(rng):
+    """Text of a small one-attribute table with ties and Missing Values."""
+    rows = [
+        f"{rng.choice(['?', *map(str, range(1, 6))])} {rng.choice('abc')}"
+        for _ in range(rng.randint(2, 12))
+    ]
+    return "\n".join(rows) + "\n"
+
+
+def best_gain_over_every_threshold(column, table, cases, min_cases):
+    """Highest `measures.gain` over the allowed Thresholds, each known value
+    but the largest tried; None if none is allowed."""
+    values = column.values
+    known = [(i, w) for i, w in cases if values[i] is not None]
+    missing = sum(w for i, w in cases if values[i] is None)
+    best = None
+    for threshold in sorted({values[i] for i, _ in known})[:-1]:
+        branches = {
+            "<=": [(i, w) for i, w in known if values[i] <= threshold],
+            ">": [(i, w) for i, w in known if values[i] > threshold],
+        }
+        partition = class_counts_per_branch(table, branches)
+        if min(sum(branch) for branch in partition) < min_cases:
+            continue
+        score = gain(known_counts(partition), partition, missing=missing)
+        best = score if best is None else max(best, score)
+    return best
+
+
+@pytest.mark.parametrize("seed", range(200))
+def test_threshold_sweep_finds_the_best_gain_of_every_threshold(write_table, seed):
+    rng = random.Random(seed)
+    table = load_table(write_table(random_continuous_table(rng)), continuous=["a1"])
+    a1 = columns(table)[0]
+    cases = [(i, rng.uniform(0.1, 1.0)) for i in range(len(table.cases))]
+    min_cases = rng.choice([0.2, 0.5, 1.0, 2.0])
+
+    candidate = a1.candidate(cases, min_cases=min_cases)
+    expected = best_gain_over_every_threshold(a1, table, cases, min_cases)
+
+    if expected is None:
+        assert candidate is None
+    else:
+        assert candidate is not None
+        assert candidate.gain == pytest.approx(expected, abs=1e-9)
